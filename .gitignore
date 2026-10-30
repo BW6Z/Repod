@@ -1,0 +1,9 @@
+node_modules/
+
+# Secrets: copy .env.example to .env locally; never commit real keys.
+.env
+
+# Per-run working copies and event logs are runtime artifacts, not source.
+runs/
+
+*.log

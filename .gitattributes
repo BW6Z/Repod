@@ -1,0 +1,4 @@
+# Keep LF in the repository and in working copies on every OS. Executors write
+# whole files with LF; mixed line endings would show up as noise in run diffs
+# and token counts.
+* text=auto eol=lf

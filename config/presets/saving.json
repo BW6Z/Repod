@@ -1,0 +1,16 @@
+{
+  "name": "saving",
+  "description": "Cost-first: strong model for critical work and review, cheap model for routine code and docs. Model choice is provisional until the provider decision is confirmed.",
+  "coordinator": "muse-spark-1.3",
+  "roles": {
+    "critical": "claude-opus-5-5",
+    "routine": "claude-haiku-5-5",
+    "review": "claude-opus-5-5",
+    "docs": "claude-haiku-5-5"
+  },
+  "models": [
+    { "id": "muse-spark-1.3", "provider": "meta", "tier": "cheap" },
+    { "id": "claude-opus-5-5", "provider": "anthropic", "tier": "strong" },
+    { "id": "claude-haiku-5-5", "provider": "anthropic", "tier": "cheap" }
+  ]
+}
