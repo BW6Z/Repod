@@ -24,8 +24,8 @@ This is an early skeleton. Do not treat planned items as working features.
 | CLI `check-config` | Implemented |
 | Model gateway and provider adapters | Planned (interfaces only) |
 | Planning, routing floor, plan validation, triage | Planned (interfaces only) |
-| Run workspace, path allowlist, diff, hashing | Planned (interfaces only) |
-| Check runner | Planned (interfaces only) |
+| Run workspace, path allowlist, diff, hashing (`src/workspace`) | Implemented, tested (Windows paths with spaces, junction escapes) |
+| Check runner (`src/verifier`) | Implemented, tested (timeouts kill the process tree; API keys withheld) |
 | Sample repository and tests | Planned (placeholder) |
 | Experiment runner | Planned |
 | Server and web UI | Planned |
@@ -98,7 +98,9 @@ API, `ANTHROPIC_API_KEY` for Anthropic models.
 
 - No model is called yet; adapters are not implemented.
 - Running checks on model-written code is not sandboxed beyond a separate
-  working copy, a stripped environment and a timeout. Repod is not a safe
+  working copy, an allowlisted environment without API keys, and a timeout
+  that kills the whole process tree. Network and filesystem access are not
+  restricted. Repod is not a safe
   platform for running arbitrary code and only runs its bundled sample.
 - Competition compliance has not been verified; see `docs/compliance.md`.
 

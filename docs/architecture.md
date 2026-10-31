@@ -55,6 +55,29 @@ Meta is called 2 to 6 times per run in normal operation.
 6. Compute standardized cost from `config/pricing.json`.
 7. Append `call_end` and return.
 
+## Workspace and checks
+
+- **Run workspace**: `runs/<runId>/workspace` is a copy of the baseline
+  (without `node_modules` and `.git`) committed in its own git repository
+  with `core.autocrlf=false`. It is never pushed.
+- **Writing executor output**: every file is validated first (task id,
+  context version, file count and size, path allowlist, protected files,
+  duplicates compared case-insensitively, no NUL or bare CR). CRLF is
+  normalized to LF. One invalid file rejects the whole output; a failed write
+  restores the files already written.
+- **Path allowlist**: rejects absolute, drive-qualified, UNC and device paths,
+  `.` and `..` segments, Windows reserved names (with any extension),
+  alternate data streams, trailing spaces or dots, `.git`, protected files,
+  and any path whose nearest existing ancestor resolves outside the workspace
+  through a symlink or junction.
+- **Diff**: `git add -A` then `git diff --cached <baseline>`, so new files are
+  included.
+- **Manifest**: SHA-256 of every file except `.git` and `node_modules`.
+- **Checks**: `node <tsc> -p tsconfig.json` and
+  `node --test --test-reporter=tap test/**/*.test.ts`, started without a
+  shell. Failures are classified as `timeout`, `spawn_error`, `exit_code` or
+  `no_tests`, so environment problems are never mistaken for code problems.
+
 ## Decisions
 
 - Node 24 runs TypeScript directly through type stripping; `tsc --noEmit` is
