@@ -30,6 +30,12 @@ describe("normalizeRelativePath", () => {
     [".git/config", "git internals"],
     ["src/.GIT/hooks/pre-commit", "git internals, mixed case"],
     ["src/a\u0000.ts", "NUL character"],
+    ["PACKAG~1.JSO", "8.3 short name of package.json"],
+    ["GIT~1/config", "8.3 short name of .git"],
+    ["src/CONIN$", "console input device"],
+    ["src/com¹.ts", "superscript COM device"],
+    ["node_modules/x/index.js", "node_modules"],
+    ["src/Node_Modules/x.js", "nested node_modules, mixed case"],
   ];
   for (const [input, label] of rejected) {
     test(`rejects ${label}`, () => {
@@ -62,9 +68,16 @@ describe("resolveAllowedPath", () => {
     await mkdir(path.join(root, "src"), { recursive: true });
     await mkdir(outside);
     await writeFile(path.join(root, "src", "a.ts"), "export {};\n");
+    // Folders that are protected or not writable, plus links into them from
+    // inside the workspace (the case reported as N2 in the re-review).
+    for (const dir of ["test", ".git", "node_modules"]) await mkdir(path.join(root, dir));
     // "junction" needs no admin rights on Windows and is ignored on POSIX,
     // where a normal directory symlink is created instead.
     await symlink(outside, path.join(root, "escape"), "junction");
+    await symlink(path.join(root, "test"), path.join(root, "alias-test"), "junction");
+    await symlink(path.join(root, ".git"), path.join(root, "alias-git"), "junction");
+    await symlink(path.join(root, "node_modules"), path.join(root, "alias-nm"), "junction");
+    await symlink(path.join(root, "src"), path.join(root, "alias-src"), "junction");
   });
 
   after(async () => {
@@ -81,8 +94,23 @@ describe("resolveAllowedPath", () => {
     await assert.rejects(resolveAllowedPath(root, "escape/nested/evil.ts"), PathRejectedError);
   });
 
+  test("rejects new files that land in a protected folder through an internal link", async () => {
+    await assert.rejects(resolveAllowedPath(root, "alias-test/new.test.ts"), /really resolves to "test\/new\.test\.ts"/);
+    await assert.rejects(resolveAllowedPath(root, "alias-git/hooks/pre-commit"), /really resolves to "\.git\//);
+    await assert.rejects(resolveAllowedPath(root, "alias-nm/pkg/deep/index.js"), /really resolves to "node_modules\//);
+  });
+
+  test("an internal link to an allowed folder resolves to the real location", async () => {
+    assert.equal(await resolveAllowedPath(root, "alias-src/new.ts"), path.join(root, "src", "new.ts"));
+    assert.equal(await resolveAllowedPath(root, "alias-src/a.ts"), path.join(root, "src", "a.ts"));
+  });
+
   test("rejects a link as the target itself", async () => {
     await assert.rejects(resolveAllowedPath(root, "escape"), PathRejectedError);
+  });
+
+  test("rejects a path whose parent is a file", async () => {
+    await assert.rejects(resolveAllowedPath(root, "src/a.ts/inner.ts"), /parent path is a file/);
   });
 
   test("rejects directories and protected files", async () => {

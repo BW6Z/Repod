@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -10,6 +11,7 @@ import {
   applyExecutorOutput,
   createRunWorkspace,
   diffAgainstBaseline,
+  gitEnvironment,
   snapshotManifest,
   type RunWorkspace,
 } from "./workspace.ts";
@@ -44,7 +46,7 @@ const expected = { taskId: "T1", contextVersion: "v1" };
 
 async function checks() {
   const specs = standardChecks({ workspaceRoot: workspace.root, tscEntry, timeoutMs: 60_000, maxOutputBytes: 100_000 });
-  return Promise.all(specs.map(runCheck));
+  return Promise.all(specs.map((spec) => runCheck(spec)));
 }
 
 before(async () => {
@@ -131,6 +133,30 @@ describe("applyExecutorOutput", () => {
     assert.ok(!Object.keys(manifest).some((key) => key.startsWith(".git/")));
   });
 
+  test("a failed write restores files already written", async () => {
+    const lockedPath = path.join(workspace.root, "src", "locked.ts");
+    await writeFile(lockedPath, "export const locked = true;\n");
+    await chmod(lockedPath, 0o444); // read-only: the second write fails on Windows and POSIX
+    const mathBefore = await readFile(path.join(workspace.root, "src", "math.ts"), "utf8");
+    try {
+      await assert.rejects(
+        applyExecutorOutput(
+          workspace,
+          output([
+            { path: "src/math.ts", content: "// overwritten\n" },
+            { path: "src/locked.ts", content: "// cannot write\n" },
+          ]),
+          expected,
+          limits,
+        ),
+      );
+      assert.equal(await readFile(path.join(workspace.root, "src", "math.ts"), "utf8"), mathBefore);
+    } finally {
+      await chmod(lockedPath, 0o644);
+      await rm(lockedPath);
+    }
+  });
+
   test("a type error written by an executor makes the type check fail", async () => {
     await applyExecutorOutput(
       workspace,
@@ -142,5 +168,29 @@ describe("applyExecutorOutput", () => {
     assert.equal(typecheck?.passed, false);
     assert.equal(typecheck?.failure, "exit_code");
     assert.match(typecheck?.output ?? "", /broken\.ts/);
+  });
+});
+
+describe("git isolation in the run workspace", () => {
+  test("git gets no API keys and ignores system and global config", () => {
+    const env = gitEnvironment({ Path: "/bin", MODEL_API_KEY: "secret", ANTHROPIC_API_KEY: "secret" });
+    assert.equal(env.MODEL_API_KEY, undefined);
+    assert.equal(env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
+    assert.ok(env.GIT_CONFIG_GLOBAL);
+  });
+
+  test("a core.fsmonitor command planted in the workspace config never runs", async () => {
+    // Model-written code could edit .git/config while tests run; git must
+    // not execute what it planted when the diff is taken.
+    const marker = path.join(base, "fsmonitor-ran.txt");
+    const hook = path.join(base, "hook.cjs");
+    await writeFile(hook, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");\n`);
+    const command = `"${process.execPath.replaceAll("\\", "/")}" "${hook.replaceAll("\\", "/")}"`;
+    execFileSync("git", ["config", "core.fsmonitor", command], { cwd: workspace.root });
+
+    await diffAgainstBaseline(workspace);
+    await assert.rejects(stat(marker), /ENOENT/);
+    execFileSync("git", ["config", "--unset", "core.fsmonitor"], { cwd: workspace.root });
   });
 });

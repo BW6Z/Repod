@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { cp, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { ledgerPath } from "../gateway/ledger.ts";
 import type { ExecutorOutput } from "../orchestrator/schemas.ts";
+import { minimalEnvironment } from "../shared/env.ts";
 import { PathRejectedError, normalizeRelativePath, resolveAllowedPath } from "./paths.ts";
 
 const execFileAsync = promisify(execFile);
@@ -40,16 +43,54 @@ export interface OutputLimits {
 // Run ids become directory names, so they are restricted to a safe alphabet.
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-// Directories never copied into or hashed from a workspace.
+// Directories never copied into, listed in or hashed from a workspace.
 const SKIPPED_DIRS = new Set(["node_modules", ".git"]);
 
-// Fixed identity for the internal baseline commit. Run repositories are
-// private scratch copies inside runs/ and are never pushed anywhere.
-const RUN_GIT_IDENTITY = ["-c", "user.name=Repod Run", "-c", "user.email=repod-run@localhost"];
+// Git understands "/dev/null" on every platform, including Git for Windows,
+// which rejects the native "\\.\nul" spelling as a config path.
+const GIT_NULL = "/dev/null";
+
+// Applied to every git command in a run workspace. Model-written code runs
+// in that workspace without a filesystem sandbox and could edit .git/config;
+// command-line settings take precedence over it, so options that execute
+// commands are switched off here. The internal baseline commit uses a fixed
+// identity: run repositories are private scratch copies and never pushed.
+const RUN_GIT_SETTINGS = [
+  "-c", "core.fsmonitor=false",
+  "-c", `core.hooksPath=${GIT_NULL}`,
+  "-c", "commit.gpgsign=false",
+  "-c", "core.autocrlf=false", // byte-exact: diffs show exactly what executors wrote
+  "-c", "core.quotepath=false",
+  "-c", "user.name=Repod Run",
+  "-c", "user.email=repod-run@localhost",
+];
+
+/**
+ * Environment for git in a run workspace: no API keys, and the user's system
+ * and global git configuration ignored, so their hooks, signing or excludes
+ * cannot change what a run does or records.
+ */
+export function gitEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...minimalEnvironment(source),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: GIT_NULL,
+    GIT_TERMINAL_PROMPT: "0",
+  };
+}
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd, windowsHide: true, maxBuffer: 50 * 1024 * 1024 });
+  const { stdout } = await execFileAsync("git", [...RUN_GIT_SETTINGS, ...args], {
+    cwd,
+    env: gitEnvironment(),
+    windowsHide: true,
+    maxBuffer: 50 * 1024 * 1024,
+  });
   return stdout;
+}
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
 }
 
 /**
@@ -74,23 +115,21 @@ export async function createRunWorkspace(baselineDir: string, runsDir: string, r
   });
 
   await git(root, ["init", "-q", "-b", "run"]);
-  // Byte-exact content: executors write LF and diffs must show what they wrote.
-  await git(root, ["config", "core.autocrlf", "false"]);
   await git(root, ["add", "-A"]);
-  await git(root, [...RUN_GIT_IDENTITY, "commit", "-q", "-m", "baseline"]);
+  await git(root, ["commit", "-q", "-m", "baseline"]);
   const baselineCommit = (await git(root, ["rev-parse", "HEAD"])).trim();
 
-  return { runId, runDir, root, ledgerFile: path.join(runDir, "events.jsonl"), baselineCommit };
+  return { runId, runDir, root, ledgerFile: ledgerPath(runDir), baselineCommit };
 }
 
 /**
  * Validates every file in an executor output and only then writes them.
  *
  * One invalid file rejects the whole output, so a run never holds half of an
- * edit. If a write still fails midway (disk full, file locked by another
- * process), files already written are restored to their previous content.
- * Folders created along the way are left in place; they are empty and do not
- * affect checks or diffs.
+ * edit. Previous contents are read before anything is written; if a write
+ * still fails midway (disk full, file locked by another process), files
+ * already written are restored. Folders created along the way are left in
+ * place; they are empty and do not affect checks or diffs.
  */
 export async function applyExecutorOutput(
   workspace: RunWorkspace,
@@ -153,17 +192,41 @@ export async function applyExecutorOutput(
 
   if (reasons.length > 0) throw new OutputRejectedError(reasons);
 
+  // Only "does not exist" means "new file". Any other read error (for
+  // example a locked file) aborts before anything is written, so a rollback
+  // can never delete a file it merely failed to read.
   const previous = new Map<string, Buffer | null>();
+  for (const file of planned) {
+    try {
+      previous.set(file.target, await readFile(file.target));
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      previous.set(file.target, null);
+    }
+  }
+
+  const written: string[] = [];
   try {
     for (const file of planned) {
-      previous.set(file.target, await readFile(file.target).catch(() => null));
       await mkdir(path.dirname(file.target), { recursive: true });
+      written.push(file.target);
       await writeFile(file.target, file.content, "utf8");
     }
   } catch (error) {
-    for (const [target, content] of previous) {
-      if (content === null) await rm(target, { force: true });
-      else await writeFile(target, content);
+    // Restore each file independently; one failed restore must not skip the
+    // rest or hide the original error.
+    const restoreErrors: unknown[] = [];
+    for (const target of written) {
+      const content = previous.get(target);
+      try {
+        if (content === null || content === undefined) await rm(target, { force: true });
+        else await writeFile(target, content);
+      } catch (restoreError) {
+        restoreErrors.push(restoreError);
+      }
+    }
+    if (restoreErrors.length > 0) {
+      throw new AggregateError([error, ...restoreErrors], "Write failed and the workspace could not be fully restored");
     }
     throw error;
   }
@@ -171,19 +234,30 @@ export async function applyExecutorOutput(
   return planned.map((file) => file.relative);
 }
 
-async function collectFiles(root: string, dir: string, out: Record<string, string>): Promise<void> {
+/**
+ * Every entry below root except .git and node_modules, which are skipped
+ * during traversal rather than listed and filtered afterwards.
+ */
+async function walk(root: string, dir = root, out: Array<{ relative: string; full: string; entry: Dirent }> = []) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    const relative = path.relative(root, full).split(path.sep).join("/");
     if (entry.isDirectory()) {
-      if (!SKIPPED_DIRS.has(entry.name)) await collectFiles(root, full, out);
-    } else if (entry.isSymbolicLink()) {
-      // Recorded by target so a swapped link also changes the manifest.
-      out[relative] = "link:" + (await readlink(full));
-    } else if (entry.isFile()) {
-      out[relative] = createHash("sha256").update(await readFile(full)).digest("hex");
+      if (!SKIPPED_DIRS.has(entry.name)) await walk(root, full, out);
+      continue;
     }
+    out.push({ relative: path.relative(root, full).split(path.sep).join("/"), full, entry });
   }
+  return out;
+}
+
+const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Regular files as sorted POSIX relative paths. Used for plan validation and the repo summary. */
+export async function listFiles(root: string): Promise<string[]> {
+  return (await walk(root))
+    .filter(({ entry }) => entry.isFile())
+    .map(({ relative }) => relative)
+    .sort(byPath);
 }
 
 /**
@@ -193,8 +267,15 @@ async function collectFiles(root: string, dir: string, out: Record<string, strin
  */
 export async function snapshotManifest(workspace: RunWorkspace): Promise<Record<string, string>> {
   const files: Record<string, string> = {};
-  await collectFiles(workspace.root, workspace.root, files);
-  return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  for (const { relative, full, entry } of await walk(workspace.root)) {
+    if (entry.isSymbolicLink()) {
+      // Recorded by target so a swapped link also changes the manifest.
+      files[relative] = "link:" + (await readlink(full));
+    } else if (entry.isFile()) {
+      files[relative] = createHash("sha256").update(await readFile(full)).digest("hex");
+    }
+  }
+  return Object.fromEntries(Object.entries(files).sort(([a], [b]) => byPath(a, b)));
 }
 
 /**
@@ -204,9 +285,5 @@ export async function snapshotManifest(workspace: RunWorkspace): Promise<Record<
  */
 export async function diffAgainstBaseline(workspace: RunWorkspace): Promise<string> {
   await git(workspace.root, ["add", "-A"]);
-  return git(workspace.root, [
-    "-c", "core.quotepath=false",
-    "diff", "--cached", "--no-color", "--no-ext-diff",
-    workspace.baselineCommit,
-  ]);
+  return git(workspace.root, ["diff", "--cached", "--no-color", "--no-ext-diff", workspace.baselineCommit]);
 }

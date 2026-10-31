@@ -1,0 +1,160 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import { ProviderError, type AdapterRequest } from "./adapter.ts";
+import { MetaAdapter, normalizeUsage, parseResponsesBody, parseRetryAfter } from "./meta.ts";
+
+const request: AdapterRequest = {
+  model: "muse-spark-1.3",
+  system: "Answer in JSON.",
+  input: "Capital of France?",
+  jsonSchema: { type: "object", properties: { capital: { type: "string" } }, required: ["capital"], additionalProperties: false },
+  schemaName: "answer",
+  maxOutputTokens: 2000,
+  reasoningEffort: "low",
+  signal: new AbortController().signal,
+};
+
+// Shape taken from the documented Responses example (resp, message, output_text, usage).
+const completed = {
+  id: "resp_abc123",
+  object: "response",
+  status: "completed",
+  output: [
+    { type: "reasoning", id: "rs_1", summary: [] },
+    { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: '{"capital":"Paris"}', annotations: [] }] },
+  ],
+  usage: {
+    input_tokens: 69,
+    input_tokens_details: { cached_tokens: 0 },
+    output_tokens: 163,
+    output_tokens_details: { reasoning_tokens: 120 },
+    total_tokens: 232,
+  },
+};
+
+function fakeFetch(status: number, body: unknown, headers: Record<string, string> = {}) {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    return new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers });
+  }) as typeof fetch;
+  return { impl, calls };
+}
+
+describe("MetaAdapter", () => {
+  test("sends a strict json_schema request with auth and store disabled", async () => {
+    const { impl, calls } = fakeFetch(200, completed);
+    await new MetaAdapter({ apiKey: "LLM_test_key", fetch: impl }).call(request);
+
+    assert.equal(calls[0]?.url, "https://api.meta.ai/v1/responses");
+    const headers = calls[0]?.init.headers as Record<string, string>;
+    assert.equal(headers.Authorization, "Bearer LLM_test_key");
+    const body = JSON.parse(String(calls[0]?.init.body));
+    assert.deepEqual(body.text.format, { type: "json_schema", name: "answer", schema: request.jsonSchema, strict: true });
+    assert.equal(body.store, false);
+    assert.equal(body.instructions, "Answer in JSON.");
+    assert.equal(body.max_output_tokens, 2000);
+    assert.deepEqual(body.reasoning, { effort: "low" });
+  });
+
+  test("returns the output text and normalized usage", async () => {
+    const { impl } = fakeFetch(200, completed);
+    const result = await new MetaAdapter({ apiKey: "k", fetch: impl }).call(request);
+    assert.equal(result.text, '{"capital":"Paris"}');
+    assert.equal(result.stop, "complete");
+    assert.equal(result.usage?.outputTokens, 163);
+    assert.equal(result.usage?.reasoningTokens, 120);
+  });
+
+  test("classifies HTTP errors", async () => {
+    const cases: Array<[number, string, boolean]> = [
+      [429, "rate_limited", true],
+      [402, "quota", false],
+      [503, "network", true],
+      [504, "network", false],
+      [400, "rejected", false],
+      [401, "rejected", false],
+    ];
+    for (const [status, kind, retryable] of cases) {
+      const { impl } = fakeFetch(status, { error: { message: "x", type: "t", param: null, code: null } }, { "retry-after": "15" });
+      const error = await new MetaAdapter({ apiKey: "k", fetch: impl }).call(request).catch((e: unknown) => e);
+      assert.ok(error instanceof ProviderError, `status ${status}`);
+      assert.equal(error.kind, kind, `status ${status}`);
+      assert.equal(error.retryable, retryable, `status ${status}`);
+      if (status === 429) assert.equal(error.retryAfterMs, 15_000);
+    }
+  });
+
+  test("connection failures become retryable network errors without leaking the key", async () => {
+    const impl = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    const error = await new MetaAdapter({ apiKey: "LLM_secret", fetch: impl }).call(request).catch((e: unknown) => e);
+    assert.ok(error instanceof ProviderError);
+    assert.equal(error.kind, "network");
+    assert.equal(error.retryable, true);
+    assert.doesNotMatch(error.message, /LLM_secret/);
+  });
+
+  test("our own timeout is not retried, because the provider may still bill the work", async () => {
+    const impl = (async () => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    }) as typeof fetch;
+    const error = await new MetaAdapter({ apiKey: "k", fetch: impl }).call(request).catch((e: unknown) => e);
+    assert.ok(error instanceof ProviderError);
+    assert.equal(error.kind, "network");
+    assert.equal(error.retryable, false);
+  });
+
+  test("an unreadable body after a successful response is a non-retryable network error", async () => {
+    const { impl } = fakeFetch(200, "{ this is not json");
+    const error = await new MetaAdapter({ apiKey: "k", fetch: impl }).call(request).catch((e: unknown) => e);
+    assert.ok(error instanceof ProviderError);
+    assert.equal(error.kind, "network");
+    assert.equal(error.retryable, false);
+  });
+
+  test("refuses to start without an API key", () => {
+    assert.throws(() => new MetaAdapter({ apiKey: "" }), /MODEL_API_KEY/);
+  });
+});
+
+describe("parseResponsesBody", () => {
+  test("incomplete responses are reported as truncated", () => {
+    assert.equal(parseResponsesBody({ ...completed, status: "incomplete" }).stop, "truncated");
+  });
+
+  test("refusal content is reported as a refusal", () => {
+    const result = parseResponsesBody({
+      status: "completed",
+      output: [{ type: "message", content: [{ type: "refusal", refusal: "I can't help with that." }] }],
+    });
+    assert.equal(result.stop, "refusal");
+    assert.equal(result.text, "I can't help with that.");
+  });
+
+  test("failed responses are classified by error code", () => {
+    assert.throws(
+      () => parseResponsesBody({ status: "failed", error: { code: "rate_limit_exceeded", message: "" } }),
+      (e: unknown) => e instanceof ProviderError && e.kind === "rate_limited",
+    );
+  });
+});
+
+describe("helpers", () => {
+  test("cached tokens are subtracted so they are not billed twice", () => {
+    const usage = normalizeUsage({ input_tokens: 1000, output_tokens: 10, input_tokens_details: { cached_tokens: 400 } });
+    assert.equal(usage?.inputTokens, 600);
+    assert.equal(usage?.cachedInputTokens, 400);
+  });
+
+  test("missing usage is reported as unknown", () => {
+    assert.equal(normalizeUsage(undefined), null);
+  });
+
+  test("Retry-After accepts seconds and HTTP dates", () => {
+    assert.equal(parseRetryAfter("2"), 2000);
+    assert.equal(parseRetryAfter(new Date(10_000).toUTCString(), 4_000), 6000);
+    assert.equal(parseRetryAfter(null), null);
+  });
+});

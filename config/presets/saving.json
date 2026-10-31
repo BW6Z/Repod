@@ -1,16 +1,16 @@
 {
   "name": "saving",
-  "description": "Cost-first: strong model for critical work and review, cheap model for routine code and docs. Model choice is provisional until the provider decision is confirmed.",
+  "description": "Cost-first, Meta only: Muse Spark coordinates and does routine code and docs; Muse Wonder takes critical work and review.",
   "coordinator": "muse-spark-1.3",
   "roles": {
-    "critical": "claude-opus-5-5",
-    "routine": "claude-haiku-5-5",
-    "review": "claude-opus-5-5",
-    "docs": "claude-haiku-5-5"
+    "critical": "muse-wonder-1.0",
+    "routine": "muse-spark-1.3",
+    "review": "muse-wonder-1.0",
+    "docs": "muse-spark-1.3"
   },
+  "allowFreeModels": false,
   "models": [
     { "id": "muse-spark-1.3", "provider": "meta", "tier": "cheap" },
-    { "id": "claude-opus-5-5", "provider": "anthropic", "tier": "strong" },
-    { "id": "claude-haiku-5-5", "provider": "anthropic", "tier": "cheap" }
+    { "id": "muse-wonder-1.0", "provider": "meta", "tier": "strong" }
   ]
 }

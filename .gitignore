@@ -2,8 +2,18 @@ node_modules/
 
 # Secrets: copy .env.example to .env locally; never commit real keys.
 .env
+.env.*
+!.env.example
+
+# Generated build output, including the future web app's dist directory.
+dist/
 
 # Per-run working copies and event logs are runtime artifacts, not source.
 runs/
 
 *.log
+
+# OS-generated metadata is local to each developer's machine.
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -49,6 +49,24 @@ describe("runCheck", () => {
     assert.equal(result.passed, false);
     assert.equal(result.failure, "timeout");
     assert.equal(result.timedOut, true);
+    assert.equal(result.processExited, true);
+  });
+
+  test("returns within the grace period when the process cannot be killed", async () => {
+    // The kill is a no-op, as when taskkill is unavailable. The child exits on
+    // its own after 3 s, so nothing is left behind after the test.
+    const started = Date.now();
+    // cwd outside the shared temp folder: on Windows a still-running child
+    // would keep that folder locked and break cleanup.
+    const result = await runCheck(nodeCheck("setTimeout(() => {}, 3000)", { timeoutMs: 200, cwd: tmpdir() }), {
+      kill: (_child, onError) => onError("kill unavailable"),
+      killGraceMs: 300,
+    });
+    assert.ok(Date.now() - started < 2500, "must not wait for the child to finish");
+    assert.equal(result.failure, "timeout");
+    assert.equal(result.processExited, false);
+    assert.match(result.output, /kill unavailable/);
+    assert.match(result.output, /did not exit within 300 ms/);
   });
 
   test("reports spawn_error when the executable does not exist", async () => {
@@ -93,6 +111,30 @@ describe("runCheck", () => {
     assert.equal(none.passed, false);
     assert.ok(none.failure === "no_tests" || none.failure === "exit_code");
   });
+
+  test("ignores 'tests N' printed by the code under test and finds the summary after truncation", async () => {
+    await mkdir(path.join(dir, "noisy"), { recursive: true });
+    await writeFile(
+      path.join(dir, "noisy", "noisy.test.ts"),
+      "import { test } from 'node:test';\nconsole.log('tests 99');\nconsole.log('x'.repeat(20000));\ntest('one', () => {});\n",
+    );
+    const result = await runCheck({
+      ...nodeCheck(""),
+      args: ["--test", "--test-reporter=tap", "noisy/**/*.test.ts"],
+      expectTests: true,
+      maxOutputBytes: 1000, // the summary lies beyond the kept head
+    });
+    assert.equal(result.outputTruncated, true);
+    assert.equal(result.testsRun, 1);
+    assert.equal(result.passed, true, result.output);
+  });
+
+  test("does not garble a multi-byte character cut by truncation", async () => {
+    // 100 bytes end inside the 34th three-byte character.
+    const result = await runCheck(nodeCheck("process.stdout.write('测试'.repeat(100))", { maxOutputBytes: 100 }));
+    assert.equal(result.output, "测试".repeat(100).slice(0, 33));
+    assert.doesNotMatch(result.output, /�/);
+  });
 });
 
 describe("helpers", () => {
@@ -107,6 +149,7 @@ describe("helpers", () => {
   test("parseTestCount reads TAP and spec summaries", () => {
     assert.equal(parseTestCount("ok 1\n# tests 4\n# pass 4\n"), 4);
     assert.equal(parseTestCount("ℹ tests 7\nℹ pass 7\n"), 7);
+    assert.equal(parseTestCount("# tests 99\nok 1\n# tests 1\n"), 1); // last summary wins
     assert.equal(parseTestCount("no summary"), null);
   });
 });

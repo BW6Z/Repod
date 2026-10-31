@@ -1,5 +1,6 @@
 {
-  "budgetUsd": 5,
+  "budgetUsd": 3,
+  "totalBudgetUsd": 10,
   "maxClarifyingQuestions": 3,
   "maxPlanRevisions": 1,
   "cheapAttemptsPerTask": 2,
@@ -7,6 +8,8 @@
   "maxEscalationsPerTask": 1,
   "maxTotalReworks": 4,
   "maxNeedFilesRequests": 1,
+  "maxTransientRetries": 2,
+  "requestTimeoutMs": 300000,
   "maxFilesPerOutput": 8,
   "maxFileBytes": 65536,
   "checkTimeoutMs": 120000,
@@ -15,5 +18,10 @@
     "coordinator": 8000,
     "executor": 32000,
     "reviewer": 8000
+  },
+  "reasoningEffort": {
+    "coordinator": "medium",
+    "executor": "medium",
+    "reviewer": "high"
   }
 }
