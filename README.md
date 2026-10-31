@@ -51,9 +51,22 @@ npm test
 npm run repod -- check-config    # validate config/
 ```
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `development` (docs-only
+changes skipped), on every pull request to `main`, and on manual dispatch:
+
+- `check` on Ubuntu and Windows: `npm ci`, type check, unit tests, config
+  validation
+- `audit`: `npm audit --audit-level=high`
+- `repo-hygiene`: `.env` is not tracked; required files exist
+
+CI uses a read-only token, needs no secrets, and never calls model APIs.
+
 ## Repository structure
 
 ```
+.github/       CI workflow
 config/        limits, pricing (with source and date), model presets
 src/
   cli/         command-line entry point
