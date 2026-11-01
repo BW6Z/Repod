@@ -39,6 +39,14 @@ export const Preset = z
     models: z.array(ModelEntry).min(1),
   })
   .superRefine((preset, ctx) => {
+    // One entry per model: the tier checks below read the last entry for an
+    // id while routing and the gateway use the first, so a duplicate could
+    // pass "critical needs strong" here and still route as cheap later.
+    const ids = preset.models.map((m) => m.id);
+    for (const id of new Set(ids.filter((id, i) => ids.indexOf(id) !== i))) {
+      ctx.addIssue({ code: "custom", message: `Model "${id}" is declared more than once in "models"` });
+    }
+
     // Every model a preset refers to must be declared in the same file, so the
     // gateway can always resolve its provider and tier without guessing.
     const tierOf = new Map(preset.models.map((m) => [m.id, m.tier]));
@@ -88,10 +96,18 @@ export const Price = z.strictObject({
 });
 export type Price = z.infer<typeof Price>;
 
-export const PricingTable = z.strictObject({
-  currency: z.literal("USD"),
-  prices: z.array(Price),
-});
+export const PricingTable = z
+  .strictObject({
+    currency: z.literal("USD"),
+    prices: z.array(Price),
+  })
+  .superRefine((table, ctx) => {
+    // Lookups take the first entry for a model; a second would silently be ignored.
+    const models = table.prices.map((p) => p.model);
+    for (const model of new Set(models.filter((m, i) => models.indexOf(m) !== i))) {
+      ctx.addIssue({ code: "custom", message: `Model "${model}" has more than one price` });
+    }
+  });
 export type PricingTable = z.infer<typeof PricingTable>;
 
 // "none" is omitted on purpose: Muse Spark rejects it with HTTP 400.

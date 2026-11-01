@@ -5,7 +5,13 @@ import { Limits, Preset, PricingTable, type RepodConfig } from "./schema.ts";
 
 async function readJson<T>(file: string, schema: ZodType<T>): Promise<T> {
   const text = await readFile(file, "utf8");
-  const parsed = schema.safeParse(JSON.parse(text));
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Invalid config file ${file}: ${(error as Error).message}`);
+  }
+  const parsed = schema.safeParse(value);
   if (!parsed.success) {
     throw new Error(`Invalid config file ${file}:\n${parsed.error.message}`);
   }

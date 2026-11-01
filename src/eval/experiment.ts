@@ -20,6 +20,11 @@ import { prepareHoldout, readHoldoutExpected, type DemoKit } from "./kit.ts";
 export const ARMS = ["A", "B", "C"] as const;
 export type Arm = (typeof ARMS)[number];
 
+/** The preset an arm runs with. */
+export function armPreset(arm: Arm): string {
+  return ARM_SETUP[arm].preset;
+}
+
 const ARM_SETUP: Record<Arm, { preset: string; singleModel: boolean }> = {
   // A uses the saving preset's critical model, the same strong model C
   // escalates to, so A and C differ only in coordination and routing.

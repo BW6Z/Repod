@@ -179,10 +179,10 @@ class Run {
 
     try {
       const knownFiles = await listFiles(this.o.workspace.root);
-      const repoSummary = renderRepoSummary(await summarizeRepo(this.o.workspace.root));
+      // The repository summary is input for Meta's planning only.
       report.plan = single
         ? await this.singleModelPlan(single, new Set(knownFiles))
-        : await this.planAndApprove(repoSummary, new Set(knownFiles));
+        : await this.planAndApprove(renderRepoSummary(await summarizeRepo(this.o.workspace.root)), new Set(knownFiles));
 
       if (report.plan) {
         report.tasks = await this.executeTasks(report.plan);
@@ -515,7 +515,8 @@ class Run {
     let guidance: string | null = null;
     const finish = (status: TaskOutcome["status"], reason: string | null): TaskOutcome => ({
       taskId: task.id, status, model, attempts, escalated, floorReason: floor.reason, reason,
-      reviewRequired: requirement.reviewRequired,
+      // Arm A has no review step, so its task is never marked as awaiting one.
+      reviewRequired: requirement.reviewRequired && !this.o.singleModelTask,
     });
 
     if (!requirement.allowed) return finish("stopped", requirement.reasons.join("; "));

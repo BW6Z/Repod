@@ -8,10 +8,11 @@ yet. See the status table in the root README.
 
 ```
 cli / web UI ──> orchestrator (state machine, owns all run state)
-                   ├── gateway     every model call: budget, ledger, validation, failure kinds
-                   │     └── adapters/meta.ts, adapters/anthropic.ts
-                   ├── workspace   run copy, path allowlist, writes, hashes, diff
-                   └── verifier    fixed checks as child processes (no shell)
+     │             ├── gateway     every model call: budget, ledger, validation, failure kinds
+     │             │     └── adapters/meta.ts, adapters/anthropic.ts
+     │             ├── workspace   run copy, path allowlist, writes, hashes, diff
+     │             └── verifier    fixed checks as child processes (no shell)
+     └──> eval/experiment ──> orchestrator, once per run (arms A, B, C; metrics)
 ```
 
 - **Orchestrator** never knows which provider serves a role; it calls the
@@ -23,6 +24,8 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
   validation, so a run never holds half an edit.
 - **Verifier** runs fixed commands with an allowlisted environment (no API
   keys) and a timeout.
+- **Experiment runner** (`src/eval/experiment.ts`) calls the same pipeline
+  once per run and collects metrics; it adds no model calls of its own.
 
 ## Run flow (`runPipeline`)
 
@@ -306,6 +309,26 @@ our own timeout and an unreadable response body are not.
   `runs/<runId>/workspace/`, and import the frozen workspace as
   `../workspace`. Keeping them outside the workspace means copying them
   never changes the frozen content.
+
+## Experiments (`npm run repod -- experiment`)
+
+- **Arms**: A is the pipeline's single-model mode (`singleModelTask`): one
+  task from `eval/demo/single-model.json` covering the whole request, on
+  the saving preset's critical model, with no planning, triage, review or
+  summary; failed attempts are repaired until the run-wide rework limit,
+  and a reply that still fails the schema after the format repair ends the
+  task, as in coordinated runs. B and C are ordinary coordinated runs with
+  the quality and saving presets. Everything else (checks, write scope,
+  limits, freeze, holdout) is shared.
+- **Report fields used**: `mode`, `costByPhase` (coordination, execution =
+  first attempts, rework = later attempts and their triage, review),
+  `frozenIntact`, the holdout check result, and the run's ledger for the
+  call count.
+- **Runner**: rounds of fresh runs under one paid-run lock, results saved
+  after every run, early stops on the cumulative budget (a `call_refused`
+  with `scope: "total"`), on changed inputs (fingerprints of code,
+  configuration, demo kit, baseline and holdout) and on failures outside a
+  run's pipeline. Metric definitions are in `eval/README.md`.
 
 ## Decisions
 

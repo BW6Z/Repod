@@ -52,9 +52,14 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/** The lock's owner, or null if the file is unreadable or not in the expected shape. */
 async function readOwner(file: string): Promise<LockOwner | null> {
   try {
-    return JSON.parse(await readFile(file, "utf8")) as LockOwner;
+    const value = JSON.parse(await readFile(file, "utf8")) as Partial<LockOwner> | null;
+    const valid =
+      typeof value?.token === "string" && Number.isSafeInteger(value.pid) &&
+      typeof value.command === "string" && typeof value.startedAt === "string";
+    return valid ? (value as LockOwner) : null;
   } catch {
     return null;
   }

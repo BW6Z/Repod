@@ -111,7 +111,8 @@ export function isProtected(normalized: string, patterns: readonly string[] = PR
 
 function isInside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  // Only a ".." segment leaves the root; a name such as "..notes.md" does not.
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 /**

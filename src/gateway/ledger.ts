@@ -29,7 +29,7 @@ export function recordableUsage(usage: Usage | null): Usage | null {
 
 const base = {
   runId: z.string().min(1),
-  seq: z.number().int().positive(), // strictly increasing per run; lets readers resume from an offset
+  seq: z.number().int().positive(), // strictly increasing per run, without gaps: a reader polling the ledger can tell where it stopped
   ts: z.string().min(1), // ISO timestamp
 };
 const attemptId = z.string().min(1);
@@ -111,10 +111,10 @@ export class LedgerWriter {
   private seq: number;
   private tail: Promise<void> = Promise.resolve();
 
-  constructor(file: string, runId: string, lastSeq = 0) {
+  constructor(file: string, runId: string) {
     this.file = file;
     this.runId = runId;
-    this.seq = lastSeq;
+    this.seq = 0;
   }
 
   append(body: LedgerEventBody): Promise<void> {

@@ -430,6 +430,7 @@ describe("runPipeline: single-model mode (experiment arm A)", () => {
     assert.ok(report.manifest, "a completed single-model run is frozen like any other");
     assert.equal(report.summary, null);
     assert.equal(report.costByPhase.coordination, 0);
+    assert.equal(report.tasks[0]?.reviewRequired, false, "arm A has no review step to wait for");
   });
 
   test("failed attempts are repaired without triage until the run's rework limit", async () => {

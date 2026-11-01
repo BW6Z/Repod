@@ -16,9 +16,10 @@ export interface Usage {
   outputTokens: number; // includes reasoning tokens when the provider bills them as output
   cachedInputTokens: number;
   reasoningTokens: number | null; // display only, never billed twice
-  // Provider usage object as returned, kept for later reconciliation. When a
-  // gateway call made several requests (retries, a format repair), this is
-  // the list of their raw usage objects.
+  // Provider usage as returned, kept for later reconciliation. An adapter
+  // sets the object of one request; a gateway call's result always holds a
+  // list, one entry per request that reported usage (retries and a format
+  // repair add entries).
   raw: unknown;
 }
 

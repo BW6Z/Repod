@@ -5,7 +5,8 @@ import path from "node:path";
 import { parseEnv } from "node:util";
 import { z } from "zod";
 import { loadConfig } from "../config/load.ts";
-import { fingerprintDirs, renderSummary, runExperiment } from "../eval/experiment.ts";
+import type { Preset, Provider } from "../config/schema.ts";
+import { armPreset, fingerprintDirs, renderSummary, runExperiment } from "../eval/experiment.ts";
 import { loadDemoKit, prepareHoldout } from "../eval/kit.ts";
 import { MetaAdapter } from "../gateway/adapters/meta.ts";
 import { ModelGateway } from "../gateway/gateway.ts";
@@ -66,9 +67,33 @@ Commands:
                         Default: arms A,C, 1 run each, label "debug".
 `;
 
+// Providers this CLI can call: it constructs only the Meta adapter.
+const CLI_PROVIDERS: ReadonlySet<Provider> = new Set(["meta"]);
+
+/** Models a preset uses (coordinator and roles) whose provider this CLI has no adapter for. */
+function modelsWithoutAdapter(preset: Preset): string[] {
+  const used = new Set([preset.coordinator, ...Object.values(preset.roles)]);
+  return preset.models.filter((m) => used.has(m.id) && !CLI_PROVIDERS.has(m.provider)).map((m) => `${m.id} (${m.provider})`);
+}
+
+/**
+ * Checked before any paid call: otherwise a run would pay for planning and
+ * only fail when the first task reaches a model it cannot call.
+ */
+function requireAdapters(preset: Preset): void {
+  const missing = modelsWithoutAdapter(preset);
+  if (missing.length > 0) {
+    throw new Error(`Preset "${preset.name}" uses models this CLI has no adapter for: ${missing.join(", ")}. Nothing was sent.`);
+  }
+}
+
 async function checkConfig(): Promise<number> {
   const config = await loadConfig(configDir);
   console.log(`Config OK: ${config.presets.size} preset(s), ${config.pricing.prices.length} priced model(s).`);
+  for (const preset of config.presets.values()) {
+    const missing = modelsWithoutAdapter(preset);
+    if (missing.length > 0) console.log(`  warning: preset "${preset.name}" cannot run in this CLI (no adapter for ${missing.join(", ")})`);
+  }
   for (const price of config.pricing.prices.filter((p) => !p.verified)) {
     console.log(`  warning: price for ${price.model} is not verified against the live pricing page`);
   }
@@ -160,6 +185,7 @@ async function run(options: CommandOptions): Promise<number> {
   if (!preset) throw new Error(`Unknown preset "${presetName}"`);
   const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
   const { limits } = config;
+  requireAdapters(preset);
 
   const adapter = metaAdapter();
   return withPaidRunLock("run", async (spentBefore) => {
@@ -229,6 +255,11 @@ async function experiment(options: CommandOptions): Promise<number> {
   const config = await loadConfig(configDir);
   const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
   const { limits } = config;
+  for (const arm of options.arms) {
+    const preset = config.presets.get(armPreset(arm));
+    if (!preset) throw new Error(`Arm ${arm} needs preset "${armPreset(arm)}", which is not configured`);
+    requireAdapters(preset);
+  }
 
   const adapter = metaAdapter();
   const holdoutDir = path.resolve(options.holdout!);

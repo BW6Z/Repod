@@ -90,3 +90,11 @@ test("an unreadable lock file still blocks", async () => {
   await release();
   await access(path.join(runsDir, PAID_RUN_LOCK));
 });
+
+test("a lock file in the wrong shape is reported as an unknown owner, not as undefined fields", async () => {
+  const runsDir = freshRunsDir();
+  const release = await acquirePaidRunLock(runsDir, "run");
+  await writeFile(path.join(runsDir, PAID_RUN_LOCK), "{}");
+  await assert.rejects(acquirePaidRunLock(runsDir, "probe"), (error: Error) => /unknown owner/.test(error.message) && !/undefined/.test(error.message));
+  await release();
+});

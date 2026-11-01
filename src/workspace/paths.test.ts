@@ -98,6 +98,11 @@ describe("resolveAllowedPath", () => {
     assert.equal(await resolveAllowedPath(root, "src/new/dir/b.ts"), path.join(root, "src", "new", "dir", "b.ts"));
   });
 
+  test("a name that merely starts with two dots stays inside the workspace", async () => {
+    assert.equal(await resolveAllowedPath(root, "..notes.md"), path.join(root, "..notes.md"));
+    assert.equal(await resolveAllowedPath(root, "..cache/x.ts"), path.join(root, "..cache", "x.ts"));
+  });
+
   test("rejects paths that escape through a junction or symlink", async () => {
     await assert.rejects(resolveAllowedPath(root, "escape/evil.ts"), PathRejectedError);
     await assert.rejects(resolveAllowedPath(root, "escape/nested/evil.ts"), PathRejectedError);

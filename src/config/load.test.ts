@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "./load.ts";
-import { Preset } from "./schema.ts";
+import { Preset, PricingTable } from "./schema.ts";
 
 const configDir = path.resolve(import.meta.dirname, "../../config");
 
@@ -68,4 +70,29 @@ test("free-tier models require allowFreeModels", () => {
   };
   assert.match(issues(docsOnFree).join(), /allowFreeModels is false/);
   assert.deepEqual(issues({ ...docsOnFree, allowFreeModels: true }), []);
+});
+
+test("a model declared twice in a preset is rejected, so routing and validation cannot disagree on its tier", () => {
+  // Declared cheap first, then strong: validation used to read the last entry
+  // while routing used the first.
+  const preset = { ...valid, models: [...valid.models, { id: "spark", provider: "meta", tier: "strong" }] };
+  assert.match(issues(preset).join(), /"spark" is declared more than once/);
+});
+
+test("a model with two prices is rejected", () => {
+  const price = { model: "spark", inputPerMTok: 1, outputPerMTok: 2, cachedInputPerMTok: null, source: "https://example.com", checkedOn: "2026-11-01", verified: false };
+  const result = PricingTable.safeParse({ currency: "USD", prices: [price, { ...price, inputPerMTok: 9 }] });
+  assert.equal(result.success, false);
+  assert.match(result.error?.issues.map((i) => i.message).join() ?? "", /"spark" has more than one price/);
+});
+
+test("a config file that is not valid JSON is named in the error", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "repod-config-"));
+  try {
+    await cp(configDir, dir, { recursive: true });
+    await writeFile(path.join(dir, "limits.json"), "{ not json");
+    await assert.rejects(loadConfig(dir), /Invalid config file .*limits\.json/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
