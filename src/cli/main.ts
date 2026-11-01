@@ -20,7 +20,34 @@ import { terminalHooks } from "./interactive.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const configDir = path.join(repoRoot, "config");
-const runsDir = path.join(repoRoot, "runs");
+
+/**
+ * Local settings come from .env (gitignored), with the shell environment as
+ * a fallback. They are never copied into process.env, so no child process
+ * (checks, git) can inherit them, whatever environment it is started with.
+ */
+const envFilePath = path.join(repoRoot, ".env");
+const envFile: Record<string, string | undefined> = existsSync(envFilePath) ? parseEnv(readFileSync(envFilePath, "utf8")) : {};
+function localSetting(name: string): string {
+  return envFile[name] || process.env[name] || "";
+}
+
+// REPOD_RUNS_DIR lets a rehearsal against a local fake API keep its runs,
+// and their spend, apart from the real ones.
+const runsDir = path.resolve(repoRoot, localSetting("REPOD_RUNS_DIR") || "runs");
+
+/**
+ * The Meta adapter for paid commands. MODEL_API_BASE_URL points it at another
+ * endpoint, such as a local fake for rehearsals; it is announced every time,
+ * because the API key is sent to whatever address is configured.
+ */
+function metaAdapter(): MetaAdapter {
+  const baseUrl = localSetting("MODEL_API_BASE_URL");
+  // Created before any folder, so a missing key leaves nothing behind.
+  const adapter = new MetaAdapter({ apiKey: localSetting("MODEL_API_KEY"), ...(baseUrl ? { baseUrl } : {}) });
+  if (baseUrl) console.warn(`Using the Meta API at ${baseUrl} (MODEL_API_BASE_URL), runs in ${runsDir}`);
+  return adapter;
+}
 
 const USAGE = `Usage: npm run repod -- <command> [options]
 
@@ -37,17 +64,6 @@ Commands:
                         Arms: A (one strong model), B (quality preset), C (saving preset).
                         Default: arms A,C, 1 run each, label "debug".
 `;
-
-/**
- * Reads secrets from .env (gitignored) without putting them into
- * process.env, so no child process can inherit them, whatever environment
- * it is started with. A key exported in the shell is used as a fallback.
- */
-function readSecrets(): { modelApiKey: string } {
-  const envFile = path.join(repoRoot, ".env");
-  const fromFile = existsSync(envFile) ? parseEnv(readFileSync(envFile, "utf8")) : {};
-  return { modelApiKey: fromFile.MODEL_API_KEY || process.env.MODEL_API_KEY || "" };
-}
 
 async function checkConfig(): Promise<number> {
   const config = await loadConfig(configDir);
@@ -94,8 +110,7 @@ async function probe(model: string | null): Promise<number> {
   if (!preset) throw new Error('Preset "saving" is missing');
   const target = model ?? preset.coordinator;
 
-  // Created before any folder, so a missing key leaves nothing behind.
-  const adapter = new MetaAdapter({ apiKey: readSecrets().modelApiKey });
+  const adapter = metaAdapter();
   return withPaidRunLock("probe", async (spentBefore) => {
     const runId = `probe-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     const runDir = path.join(runsDir, runId);
@@ -145,8 +160,7 @@ async function run(options: CommandOptions): Promise<number> {
   const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
   const { limits } = config;
 
-  // Created before any folder, so a missing key leaves nothing behind.
-  const adapter = new MetaAdapter({ apiKey: readSecrets().modelApiKey });
+  const adapter = metaAdapter();
   return withPaidRunLock("run", async (spentBefore) => {
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     const workspace = await createRunWorkspace(path.join(repoRoot, "sample-repo"), runsDir, runId);
@@ -203,8 +217,7 @@ async function experiment(options: CommandOptions): Promise<number> {
   const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
   const { limits } = config;
 
-  // Created before any folder, so a missing key leaves nothing behind.
-  const adapter = new MetaAdapter({ apiKey: readSecrets().modelApiKey });
+  const adapter = metaAdapter();
   // The lock is held for the whole experiment; each run re-reads past spend.
   return withPaidRunLock("experiment", async () => {
     const label = options.label ?? "debug";

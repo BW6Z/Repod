@@ -172,6 +172,12 @@ API. `ANTHROPIC_API_KEY` is reserved for the optional Anthropic adapter and is
 not used yet. The CLI reads keys from `.env` without adding them to the
 process environment, so child processes (checks, git) never inherit them.
 
+Two optional settings exist for rehearsing against a local fake of the Meta
+API: `MODEL_API_BASE_URL` sends requests (and the key) to another address,
+and the CLI announces it on every paid command; `REPOD_RUNS_DIR` (relative
+to the repository) keeps those runs and their spend apart from the real
+ones, for example `runs/rehearsal`. Leave both unset for real runs.
+
 ## Known limitations
 
 - The Meta adapter has only been tested against mocked responses based on
@@ -197,7 +203,9 @@ process environment, so child processes (checks, git) never inherit them.
   they cannot be checked out from here yet.
 - Running time of the sample's 20,000-task cases is not a pass condition and
   is not reported yet.
-- Competition compliance has not been verified; see `docs/compliance.md`.
+- Competition compliance is checked against the Participant Guide only;
+  the judging rubric and the Official Rules are still open. See
+  `docs/compliance.md`.
 
 ## Documentation
 
