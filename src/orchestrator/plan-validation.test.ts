@@ -31,6 +31,7 @@ function task(id: string, overrides: Partial<PlannedTask> = {}): PlannedTask {
     capabilities: ["code"],
     acceptance: ["tsc passes"],
     context_files: ["src/index.ts"],
+    write_files: ["src/index.ts"],
     depends_on: [],
     model: "muse-spark-1.3",
     reason: "",
@@ -65,6 +66,15 @@ describe("validatePlan: plans", () => {
     assert.match(errors(plan([task("T1", { context_files: ["src/missing.ts"] })]), context).join(), /does not exist/);
     assert.match(errors(plan([task("T1", { context_files: ["../secret.txt"] })]), context).join(), /Rejected path/);
     assert.match(errors(plan([task("T1", { model: "gpt-x" })]), context).join(), /not in preset/);
+  });
+
+  test("rejects a missing, protected, unsafe or duplicated write scope", () => {
+    assert.match(errors(plan([task("T1", { write_files: [] })]), context).join(), /no write_files/);
+    assert.match(errors(plan([task("T1", { write_files: ["test/a.test.ts"] })]), context).join(), /is protected/);
+    assert.match(errors(plan([task("T1", { write_files: ["node_modules/x.js"] })]), context).join(), /Rejected path/);
+    assert.match(errors(plan([task("T1", { write_files: ["src/a.ts", "SRC/A.ts"] })]), context).join(), /listed twice/);
+    // New files may be listed: they do not have to exist yet.
+    assert.deepEqual(errors(plan([task("T1", { write_files: ["src/new-module.ts"] })]), context), []);
   });
 
   test("warns, without blocking, when the worst case exceeds the remaining budget", () => {

@@ -107,6 +107,7 @@ export function buildExecutorInput(parts: ExecutorInputParts): { input: string; 
   const rules = [
     `Set task_id to "${task.id}" and context_version to "${version}".`,
     "Return every file you change or create in full in `files` (whole-file replacement, LF line endings).",
+    `You may only change or create these files: ${task.write_files.join(", ")}. Output that touches any other file is rejected.`,
     `Do not modify these protected paths: ${protectedList()}.`,
     needFilesAllowed
       ? "If you cannot finish without seeing other existing files, return no files and list their paths in `need_files`. You can do this only once."

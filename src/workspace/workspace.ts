@@ -17,6 +17,10 @@ export interface RunWorkspace {
   root: string; // the isolated copy the executors write to
   ledgerFile: string;
   baselineCommit: string;
+  // Set when something may still be running in the workspace (a check
+  // process that could not be confirmed dead). A tainted workspace accepts
+  // no further writes; the run must stop.
+  tainted: string | null;
 }
 
 /** Raised when an executor output fails validation; nothing has been written. */
@@ -30,9 +34,25 @@ export class OutputRejectedError extends Error {
   }
 }
 
+/** Raised on any write attempt to a tainted workspace. */
+export class WorkspaceTaintedError extends Error {
+  constructor(reason: string) {
+    super(`Workspace is no longer usable: ${reason}`);
+    this.name = "WorkspaceTaintedError";
+  }
+}
+
+/** Content hash per POSIX path; null means the file did not exist. */
+export type FileSnapshot = Record<string, string | null>;
+
 export interface OutputExpectations {
   taskId: string;
   contextVersion: string; // the version the program sent with the task input
+  allowedWrites: string[]; // the task's write scope (write_files)
+  // State of every file the executor read or may write, taken when its input
+  // was assembled. Any difference at write time means the output answers an
+  // outdated workspace and is rejected rather than allowed to overwrite.
+  snapshot: FileSnapshot;
 }
 
 export interface OutputLimits {
@@ -119,7 +139,36 @@ export async function createRunWorkspace(baselineDir: string, runsDir: string, r
   await git(root, ["commit", "-q", "-m", "baseline"]);
   const baselineCommit = (await git(root, ["rev-parse", "HEAD"])).trim();
 
-  return { runId, runDir, root, ledgerFile: ledgerPath(runDir), baselineCommit };
+  return { runId, runDir, root, ledgerFile: ledgerPath(runDir), baselineCommit, tainted: null };
+}
+
+/** Marks the workspace unusable; every later write is refused. */
+export function markTainted(workspace: RunWorkspace, reason: string): void {
+  workspace.tainted ??= reason;
+}
+
+async function hashOrNull(target: string): Promise<string | null> {
+  try {
+    return createHash("sha256").update(await readFile(target)).digest("hex");
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Records the current state of the given workspace paths (read or write
+ * scope): a content hash for existing files, null for files that do not exist
+ * yet. Compared again right before an executor's output is written.
+ */
+export async function captureSnapshot(workspace: RunWorkspace, paths: string[]): Promise<FileSnapshot> {
+  const snapshot: FileSnapshot = {};
+  for (const requested of paths) {
+    // Reading is allowed for protected files, so no protected patterns here.
+    const target = await resolveAllowedPath(workspace.root, requested, []);
+    snapshot[normalizeRelativePath(requested)] = await hashOrNull(target);
+  }
+  return snapshot;
 }
 
 /**
@@ -137,7 +186,10 @@ export async function applyExecutorOutput(
   expected: OutputExpectations,
   limits: OutputLimits,
 ): Promise<string[]> {
+  if (workspace.tainted) throw new WorkspaceTaintedError(workspace.tainted);
+
   const reasons: string[] = [];
+  const allowed = new Set(expected.allowedWrites.map((p) => normalizeRelativePath(p).toLowerCase()));
   if (output.task_id !== expected.taskId) {
     reasons.push(`output is for task "${output.task_id}", expected "${expected.taskId}"`);
   }
@@ -166,6 +218,10 @@ export async function applyExecutorOutput(
 
     // Case-insensitive, because "src/A.ts" and "src/a.ts" are the same file on Windows.
     const key = relative.toLowerCase();
+    if (!allowed.has(key)) {
+      reasons.push(`"${file.path}" is outside the task's write scope`);
+      continue;
+    }
     if (seen.has(key)) {
       reasons.push(`duplicate path "${file.path}"`);
       continue;
@@ -188,6 +244,26 @@ export async function applyExecutorOutput(
       continue;
     }
     planned.push({ relative, target, content });
+  }
+
+  // The model echoing the right context_version only proves which input it
+  // answered; this proves the workspace still matches that input.
+  for (const [relative, recorded] of Object.entries(expected.snapshot)) {
+    let current: string | null;
+    try {
+      current = await hashOrNull(await resolveAllowedPath(workspace.root, relative, []));
+    } catch (error) {
+      if (!(error instanceof PathRejectedError)) throw error;
+      reasons.push(`"${relative}" is no longer a valid path (${error.message})`);
+      continue;
+    }
+    if (current !== recorded) {
+      reasons.push(
+        recorded === null
+          ? `"${relative}" was expected not to exist yet but now does`
+          : `"${relative}" changed after the task input was assembled`,
+      );
+    }
   }
 
   if (reasons.length > 0) throw new OutputRejectedError(reasons);

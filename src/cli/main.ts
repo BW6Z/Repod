@@ -120,9 +120,11 @@ async function main(argv: string[]): Promise<number> {
       return probe(parsed.model);
     case "run":
     case "experiment":
-      // TODO: Wire to runPipeline and the experiment runner once planning and
-      // execution are connected. Returning a distinct exit code keeps scripts
-      // from treating this placeholder as success.
+      // TODO: Wire `run` to runPipeline (src/orchestrator) and add the
+      // experiment runner. Blocked on the sample repository: its baseline
+      // code, behavior rules, interface contract and visible tests do not
+      // exist yet, and the pipeline needs all four. Returning a distinct exit
+      // code keeps scripts from treating this placeholder as success.
       console.error(`"${parsed.command}" is not implemented yet.`);
       return 2;
     case null:

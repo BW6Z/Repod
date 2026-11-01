@@ -27,11 +27,14 @@ This is an early skeleton. Do not treat planned items as working features.
 | CLI `check-config`, `spend` | Implemented |
 | CLI `probe` | Implemented, not yet run against the live API |
 | Capability floor with free/cheap/strong tiers; presets limit which models may execute (`src/orchestrator/routing.ts`) | Implemented, tested |
-| Check and review requirements per task type (`reviewRequirement`) | Implemented, tested; not yet wired into the pipeline |
+| Check and review requirements per task type (`reviewRequirement`) | Implemented, tested, applied by the pipeline (docs checks themselves are planned) |
 | Plan validation: ids, dependencies, cycles, context files, models, budget warning (`src/orchestrator/plan-validation.ts`) | Implemented, tested |
 | Executor input assembly and context versioning (`src/orchestrator/context.ts`) | Implemented, tested |
 | Repository summary for planning (`src/workspace/summary.ts`) | Implemented, tested |
-| Prompts, planning and triage calls, pipeline (`src/orchestrator/orchestrator.ts`) | Planned (interfaces only) |
+| Pipeline: planning with clarifying questions and one plan revision, execution with repair and one escalation, review, freeze, summary (`src/orchestrator/orchestrator.ts`) | Implemented, tested end to end with a scripted fake gateway and real checks; **not yet run with real models** |
+| System prompts (`src/orchestrator/prompts.ts`) | First versions; to be tuned against real model behavior |
+| Write scope per task, pre-write freshness check, tainted workspaces (`src/workspace`) | Implemented, tested |
+| CLI `run`, `experiment` | Planned (blocked on the sample repository) |
 | Run workspace, path allowlist, diff, hashing (`src/workspace`) | Implemented, tested (Windows paths with spaces, junction escapes, links into protected folders) |
 | Check runner (`src/verifier`) | Implemented, tested (timeouts kill the process tree; API keys withheld) |
 | Sample repository and tests | Planned (placeholder) |
@@ -155,6 +158,8 @@ process environment, so child processes (checks, git) never inherit them.
   still define git filters in the workspace's own `.git/config`; they would
   run without API keys. Repod is not a safe
   platform for running arbitrary code and only runs its bundled sample.
+- Blocking review findings are reported and leave the run incomplete; they
+  are not fixed automatically yet.
 - Competition compliance has not been verified; see `docs/compliance.md`.
 
 ## Documentation

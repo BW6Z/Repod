@@ -17,6 +17,7 @@ const task: PlannedTask = {
   capabilities: ["code"],
   acceptance: ["tsc passes", "visible tests pass"],
   context_files: ["src/index.ts"],
+  write_files: ["src/index.ts"],
   depends_on: [],
   model: "muse-wonder-1.0",
   reason: "",
@@ -70,6 +71,7 @@ test("reply rules list every protected path and follow the need_files allowance"
   for (const protectedPath of ["package.json", "package-lock.json", "tsconfig.json", ".gitattributes", "test/"]) {
     assert.ok(input.includes(protectedPath), protectedPath);
   }
+  assert.match(input, /You may only change or create these files: src\/index\.ts\./);
   assert.match(input, /list their paths in `need_files`/);
   assert.match(buildExecutorInput({ ...parts, needFilesAllowed: false }).input, /Leave `need_files` empty/);
 });

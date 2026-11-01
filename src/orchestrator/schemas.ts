@@ -28,7 +28,11 @@ export const PlannedTask = z.strictObject({
   impact: Impact,
   capabilities: z.array(Capability),
   acceptance: z.array(z.string()),
-  context_files: z.array(z.string()),
+  context_files: z.array(z.string()), // files the executor reads
+  // Files the task may change or create. Separate from context_files: being
+  // able to read a test does not mean being allowed to change it. Output that
+  // touches any other file is rejected as a whole.
+  write_files: z.array(z.string()),
   depends_on: z.array(z.string()),
   model: z.string(),
   reason: z.string(), // shown to the user next to the model choice

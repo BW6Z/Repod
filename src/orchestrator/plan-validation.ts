@@ -1,5 +1,5 @@
 import type { Limits, Preset, PricingTable } from "../config/schema.ts";
-import { PathRejectedError, normalizeRelativePath } from "../workspace/paths.ts";
+import { PathRejectedError, isProtected, normalizeRelativePath } from "../workspace/paths.ts";
 import { applyCapabilityFloor, requiredTier } from "./routing.ts";
 import type { PlanResponse, PlannedTask } from "./schemas.ts";
 
@@ -75,6 +75,22 @@ function validateTasks(plan: PlanResponse, context: PlanContext): PlanIssue[] {
         if (!knownLower.has(normalizeRelativePath(file).toLowerCase())) {
           error(task.id, `context file "${file}" does not exist in the workspace`);
         }
+      } catch (e) {
+        if (!(e instanceof PathRejectedError)) throw e;
+        error(task.id, e.message);
+      }
+    }
+
+    // The write scope is checked when the plan is made, so a bad scope costs
+    // a re-plan rather than a wasted executor call.
+    if (task.write_files.length === 0) error(task.id, "task has no write_files");
+    const writes = new Set<string>();
+    for (const file of task.write_files) {
+      try {
+        const normalized = normalizeRelativePath(file);
+        if (isProtected(normalized)) error(task.id, `write file "${file}" is protected`);
+        if (writes.has(normalized.toLowerCase())) error(task.id, `write file "${file}" is listed twice`);
+        writes.add(normalized.toLowerCase());
       } catch (e) {
         if (!(e instanceof PathRejectedError)) throw e;
         error(task.id, e.message);

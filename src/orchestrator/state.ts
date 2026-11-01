@@ -1,39 +1,40 @@
-import type { PlannedTask } from "./schemas.ts";
+import type { CheckResult } from "../verifier/verifier.ts";
+import type { PlannedTask, ReviewFinding, RunSummary } from "./schemas.ts";
 
 /**
- * Run phases. Everything before "executing" is the conversation between the
- * user and Meta; once execution starts the user no longer talks to Meta and
- * progress comes from program events.
+ * Final state of one planned task.
+ *   - passed:  its checks passed on the last attempt
+ *   - failed:  attempts or the coordinator's triage ended it
+ *   - stopped: the run stopped while it ran, or it was not allowed to run
+ *   - skipped: a dependency did not pass, or the run had already stopped
  */
-export type RunPhase =
-  | "planning"
-  | "awaiting_answers" // Meta asked clarifying questions
-  | "awaiting_approval" // plan shown; user may approve or send it back once
-  | "executing"
-  | "reviewing"
-  | "frozen" // candidate locked by content hashes; holdout checks run now
-  | "finished"
-  | "interrupted"; // process stopped mid-run; never shown as completed
+export type TaskStatus = "passed" | "failed" | "stopped" | "skipped";
 
-export type TaskStatus = "pending" | "running" | "checking" | "passed" | "failed" | "stopped";
-
-export interface TaskState {
-  task: PlannedTask;
+export interface TaskOutcome {
+  taskId: string;
   status: TaskStatus;
-  model: string; // may differ from task.model after the capability floor or an escalation
+  model: string; // the model of the last attempt
   attempts: number;
   escalated: boolean;
-  needFilesUsed: boolean;
+  floorReason: string | null; // why the program overrode Meta's model choice, if it did
+  reason: string | null; // why the task did not pass
+  reviewRequired: boolean;
 }
 
-/** The program, not the coordinator, owns this state; Meta only sees summaries of it. */
-export interface RunState {
-  runId: string;
-  preset: string;
-  request: string;
-  phase: RunPhase;
-  planRevisionsUsed: number;
-  totalReworks: number;
-  tasks: TaskState[];
-  frozenManifest: Record<string, string> | null; // path -> content hash at freeze time
+/**
+ * What a run produced. The program, not the coordinator, owns this report;
+ * Meta's closing message is included but every status and figure here comes
+ * from checks and the ledger.
+ */
+export interface RunReport {
+  status: "completed" | "incomplete";
+  plan: PlannedTask[] | null;
+  tasks: TaskOutcome[];
+  findings: Array<ReviewFinding & { taskId: string }>;
+  finalChecks: CheckResult[]; // dev checks re-run on the integrated result
+  holdout: CheckResult[];
+  manifest: Record<string, string> | null; // content hashes at freeze time
+  problems: string[]; // every reason the run is not completed
+  summary: RunSummary | null;
+  costUsd: number | null; // list-price cost of all calls; null if any cost is unknown
 }

@@ -80,8 +80,9 @@ const CODE_TASKS = new Set<PlannedTask["type"]>(["implement", "fix", "test"]);
  *     scheduled.
  *   - Complex or high-impact tasks are always reviewed.
  *
- * TODO: Call this from the pipeline once docs checks exist (sample-repo
- * milestone); until then it is exercised only by unit tests.
+ * TODO: Docs checks (examples compile, referenced exports exist) are not
+ * built yet, so the pipeline never lists them as available and every docs
+ * task is reviewed. Add them with the sample repository's docs.
  */
 export function reviewRequirement(task: PlannedTask, available: ReadonlySet<CheckKind>): ReviewRequirement {
   const reasons: string[] = [];

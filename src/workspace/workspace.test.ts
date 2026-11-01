@@ -8,10 +8,13 @@ import type { ExecutorOutput } from "../orchestrator/schemas.ts";
 import { runCheck, standardChecks } from "../verifier/verifier.ts";
 import {
   OutputRejectedError,
+  WorkspaceTaintedError,
   applyExecutorOutput,
+  captureSnapshot,
   createRunWorkspace,
   diffAgainstBaseline,
   gitEnvironment,
+  markTainted,
   snapshotManifest,
   type RunWorkspace,
 } from "./workspace.ts";
@@ -37,12 +40,23 @@ const BASELINE: Record<string, string> = {
 
 // A space in the folder name mirrors the real project path on this machine.
 let base: string;
+let baselineDir: string;
 let workspace: RunWorkspace;
 
 function output(files: ExecutorOutput["files"], overrides: Partial<ExecutorOutput> = {}): ExecutorOutput {
   return { task_id: "T1", context_version: "v1", files, need_files: [], notes: "", ...overrides };
 }
-const expected = { taskId: "T1", contextVersion: "v1" };
+// A broad write scope and no snapshot, so these tests exercise one rule at a
+// time; the scope and snapshot rules have their own tests below.
+const expected = {
+  taskId: "T1",
+  contextVersion: "v1",
+  allowedWrites: [
+    "src/ok.ts", "tsconfig.json", "src/x.ts", "src/big.ts", "src/math.ts", "src/extra/util.ts",
+    "src/locked.ts", "src/broken.ts", ...Array.from({ length: 9 }, (_, i) => `src/f${i}.ts`),
+  ],
+  snapshot: {},
+};
 
 async function checks() {
   const specs = standardChecks({ workspaceRoot: workspace.root, tscEntry, timeoutMs: 60_000, maxOutputBytes: 100_000 });
@@ -51,7 +65,7 @@ async function checks() {
 
 before(async () => {
   base = await mkdtemp(path.join(tmpdir(), "repod workspace "));
-  const baselineDir = path.join(base, "baseline repo");
+  baselineDir = path.join(base, "baseline repo");
   for (const [file, content] of Object.entries(BASELINE)) {
     await mkdir(path.dirname(path.join(baselineDir, file)), { recursive: true });
     await writeFile(path.join(baselineDir, file), content);
@@ -168,6 +182,70 @@ describe("applyExecutorOutput", () => {
     assert.equal(typecheck?.passed, false);
     assert.equal(typecheck?.failure, "exit_code");
     assert.match(typecheck?.output ?? "", /broken\.ts/);
+  });
+});
+
+describe("write scope, freshness and taint", () => {
+  const scoped = (snapshot: Record<string, string | null>, allowedWrites = ["src/math.ts", "src/fresh.ts"]) => ({
+    taskId: "T1",
+    contextVersion: "v1",
+    allowedWrites,
+    snapshot,
+  });
+
+  test("a file outside the write scope rejects the whole output", async () => {
+    await assert.rejects(
+      applyExecutorOutput(workspace, output([{ path: "src/other.ts", content: "export {};\n" }]), scoped({}), limits),
+      /outside the task's write scope/,
+    );
+    await assert.rejects(readFile(path.join(workspace.root, "src", "other.ts")));
+  });
+
+  test("output is rejected when a file changed after the input was assembled", async () => {
+    const mathPath = path.join(workspace.root, "src", "math.ts");
+    const snapshot = await captureSnapshot(workspace, ["src/math.ts"]);
+    const before = await readFile(mathPath, "utf8");
+    await writeFile(mathPath, before + "// changed by someone else\n");
+    try {
+      await assert.rejects(
+        applyExecutorOutput(workspace, output([{ path: "src/math.ts", content: "// stale\n" }]), scoped(snapshot), limits),
+        /changed after the task input was assembled/,
+      );
+      assert.match(await readFile(mathPath, "utf8"), /changed by someone else/);
+    } finally {
+      await writeFile(mathPath, before);
+    }
+  });
+
+  test("a file expected to be new must still not exist", async () => {
+    const freshPath = path.join(workspace.root, "src", "fresh.ts");
+    const snapshot = await captureSnapshot(workspace, ["src/fresh.ts"]);
+    assert.deepEqual(snapshot, { "src/fresh.ts": null });
+    await writeFile(freshPath, "// created by someone else\n");
+    try {
+      await assert.rejects(
+        applyExecutorOutput(workspace, output([{ path: "src/fresh.ts", content: "// mine\n" }]), scoped(snapshot), limits),
+        /expected not to exist yet/,
+      );
+    } finally {
+      await rm(freshPath);
+    }
+  });
+
+  test("an unchanged snapshot lets the output through", async () => {
+    const snapshot = await captureSnapshot(workspace, ["src/fresh.ts"]);
+    const written = await applyExecutorOutput(workspace, output([{ path: "src/fresh.ts", content: "export {};\n" }]), scoped(snapshot), limits);
+    assert.deepEqual(written, ["src/fresh.ts"]);
+    await rm(path.join(workspace.root, "src", "fresh.ts"));
+  });
+
+  test("a tainted workspace refuses every write", async () => {
+    const other = await createRunWorkspace(baselineDir, path.join(base, "runs"), "run-tainted");
+    markTainted(other, "check process did not exit");
+    await assert.rejects(
+      applyExecutorOutput(other, output([{ path: "src/math.ts", content: "// x\n" }]), scoped({}), limits),
+      WorkspaceTaintedError,
+    );
   });
 });
 

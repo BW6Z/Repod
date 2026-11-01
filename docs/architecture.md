@@ -1,7 +1,8 @@
 # Architecture
 
-Status: skeleton. Interfaces exist; most behavior is not implemented yet (see
-the status table in the root README).
+Status: the pipeline and its building blocks are implemented and tested
+offline with a scripted fake gateway; nothing has run against real models
+yet. See the status table in the root README.
 
 ## Modules
 
@@ -23,27 +24,47 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
 - **Verifier** runs fixed commands with an allowlisted environment (no API
   keys) and a timeout.
 
-## Run flow
+## Run flow (`runPipeline`)
 
-1. **Prepare**: copy the sample repo baseline into `runs/<runId>/`; build a
-   repo summary (file tree, sizes, exports, one-line responsibilities).
+1. **Prepare**: the run workspace is a copy of the baseline in
+   `runs/<runId>/`; the pipeline builds a repo summary (file tree, sizes,
+   exports, optional responsibilities).
 2. **Plan**: Meta returns either clarifying questions (at most 3, one round,
-   each with a default answer) or a plan. The program validates the plan and
-   applies the capability floor.
+   each with a default answer) or a plan. The program validates the plan; an
+   invalid plan gets one fix request with the problems listed, then the run
+   stops.
 3. **Approve**: the user approves, or sends the plan back once with a comment;
-   the revised plan is validated again and can only be approved.
-   After this point the user no longer converses with Meta.
-4. **Execute**: tasks in dependency order, one writer at a time. Executors get
-   whole file contents and return whole-file replacements as JSON. Dev checks
-   run after each task; failures are classified, and Meta triages implementation
-   failures (repair, escalate once, or stop) within fixed limits.
-5. **Review**: the strong model reviews core diffs; findings are triaged by
-   severity and evidence.
-6. **Freeze**: hash every file; run holdout tests once without feedback.
-7. **Summarize**: Meta writes the closing message; the program fills in all
-   numbers.
+   the revised plan is validated again and can only be approved. Experiment
+   runs use default answers and approve automatically. After this point the
+   user no longer converses with Meta.
+4. **Execute**: tasks in dependency order (a task whose dependency did not
+   pass is skipped), one writer at a time. Each attempt reads the task's
+   context and existing write files, snapshots its read and write scope,
+   calls the executor, writes the output (scope and freshness checked), and
+   runs the dev checks. Failures are classified:
+   - **retry** (checks failed, output rejected, invalid JSON after repair):
+     the program decides which next steps are allowed (repair while the
+     tier's attempts remain, one escalation from a cheaper model to the
+     critical model, stop) and Meta picks among them. The next attempt gets
+     the current diff, the failure evidence and Meta's guidance.
+   - **stop the task** (truncation, refusal).
+   - **stop the run** (budget, quota, rejected or failed requests, ledger
+     write failure, environment problems in checks, a check process that
+     could not be stopped, which also taints the workspace).
+   A global rework limit applies across tasks. Code tasks without a type
+   check and visible tests do not run.
+5. **Review**: tasks that require review (complex or high impact, or docs
+   whose checks cannot run) are reviewed by the preset's review model.
+   Blocking findings and findings that need a human decision leave the run
+   incomplete; they are not fixed automatically yet.
+6. **Freeze**: only when every task passed. The dev checks run again on the
+   integrated result, every file is hashed, holdout checks run once without
+   feedback to any model, and the hashes are compared again so results are
+   bound to the frozen content.
+7. **Summarize**: Meta writes the closing message; the program owns every
+   status and figure in the report. Skipped when the budget ran out.
 
-Meta is called 2 to 6 times per run in normal operation.
+Meta is called 2 to 6 times per run in normal operation (plus triage).
 
 ## Routing and plan checks
 
@@ -57,8 +78,9 @@ Meta is called 2 to 6 times per run in normal operation.
   `free`. A choice below the floor, or outside the executor models, is
   replaced by the preset's `critical` (strong) or `routine` (cheap) model,
   with the reason recorded.
-- **Checks and review** (`reviewRequirement`, not yet wired into the
-  pipeline): code tasks (implement, fix, test) need a type check and visible
+- **Checks and review** (`reviewRequirement`, applied by the pipeline before
+  each task; docs checks do not exist yet, so docs tasks are currently always
+  reviewed): code tasks (implement, fix, test) need a type check and visible
   tests or they do not run; docs tasks may use free or cheap models, but a
   review is scheduled when any docs check (examples compile, referenced
   exports and commands exist) cannot run; complex or high-impact tasks are
@@ -149,9 +171,21 @@ our own timeout and an unreadable response body are not.
   `core.fsmonitor`, hooks and commit signing. Model-written code could edit
   the workspace's `.git/config` while tests run; command-line settings take
   precedence over it.
+- **Write scope and freshness**: every planned task lists `write_files`
+  (validated at planning time: not protected, no duplicates). Output that
+  touches any other file is rejected. When the input is assembled, the
+  program snapshots the task's read and write files (content hash, or "does
+  not exist" for new files); right before writing, the snapshot is compared
+  again and any change rejects the output. The echoed `context_version` only
+  proves which input the model answered; the snapshot proves the workspace
+  still matches it.
+- **Tainted workspaces**: a check process that could not be confirmed dead
+  marks the workspace tainted; every later write is refused and the run
+  stops.
 - **Writing executor output**: every file is validated first (task id,
-  context version, file count and size, path allowlist, protected files,
-  duplicates compared case-insensitively, no NUL or bare CR). CRLF is
+  context version, write scope, file count and size, path allowlist,
+  protected files, duplicates compared case-insensitively, no NUL or bare
+  CR, freshness). CRLF is
   normalized to LF. One invalid file rejects the whole output. Previous
   contents are read before any write; a read error other than "not found"
   aborts before writing. If a write fails midway, each written file is
