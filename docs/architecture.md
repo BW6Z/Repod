@@ -45,17 +45,27 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
    context and existing write files, snapshots its read and write scope,
    calls the executor, writes the output (scope and freshness checked), and
    runs the dev checks. Failures are classified:
-   - **retry** (checks failed, output rejected, invalid JSON after repair):
-     the program decides which next steps are allowed (repair while the
-     tier's attempts remain, one escalation from a cheaper model to the
-     critical model, stop) and Meta picks among them. The next attempt gets
-     the current diff, the failure evidence and Meta's guidance.
-   - **stop the task** (truncation, refusal).
+   - **retry after a failed check**: the program decides which next steps
+     are allowed (repair while the tier's attempts remain, one escalation
+     from a cheaper model to the critical model, stop) and Meta picks among
+     them. The next attempt gets the current diff, the failure evidence and
+     Meta's guidance.
+   - **retry after a rejected output** (outside the write scope, stale
+     version, no files, a bad file request): repair or stop only. The
+     reason can be stated, so a repair can fix it; a stronger model is no
+     answer to a broken rule, so it never escalates. The triage input names
+     the category.
+   - **stop the task** (truncation, refusal, a reply that still fails the
+     schema after the gateway's one format repair, a write or context path
+     that an earlier task made unusable).
    - **stop the run** (budget, quota, rejected or failed requests, ledger
      write failure, environment problems in checks, a check process that
      could not be stopped, which also taints the workspace).
    A global rework limit applies across tasks. Code tasks without a type
-   check and visible tests do not run.
+   check and visible tests do not run. Each task's result is kept as soon as
+   it is known, so if the run stops on an error, the report still lists the
+   finished tasks; the task that was running is "stopped" and the rest are
+   "skipped".
 5. **Review**: tasks that require review (complex or high impact, or docs
    whose checks cannot run) are reviewed by the preset's review model.
    Blocking findings and findings that need a human decision leave the run
@@ -102,7 +112,9 @@ Meta is called 2 to 6 times per run in normal operation (plus triage).
   dependencies, context files that pass the path allowlist and either exist
   or are in the `write_files` of a task the reader depends on (directly or
   transitively; never its own, an unrelated or a later task's), models
-  declared in the preset, acceptance criteria present. A worst-case output
+  declared in the preset, acceptance criteria present, and write paths that
+  can be written: none lies inside another write path of the plan, none is
+  an existing folder or below an existing file. A worst-case output
   cost above the remaining budget is a warning, not an error; it prices each
   task on the model the floor will use and counts allowed escalations.
 - **Executor input**: task, acceptance criteria, interface contract and full
@@ -227,12 +239,14 @@ our own timeout and an unreadable response body are not.
   stops.
 - **Writing executor output**: every file is validated first (task id,
   context version, write scope, file count and size, path allowlist,
-  protected files, duplicates compared case-insensitively, no NUL or bare
-  CR, freshness). CRLF is
+  protected files, duplicates compared case-insensitively, no path inside
+  another path of the same output, no NUL or bare CR, freshness). CRLF is
   normalized to LF. One invalid file rejects the whole output. Previous
   contents are read before any write; a read error other than "not found"
   aborts before writing. If a write fails midway, each written file is
-  restored independently and the original error is reported.
+  restored independently and the original error is reported; a folder
+  created along the way is left in place, since it is empty and only files
+  are restored.
 - **Path allowlist**: rejects absolute, drive-qualified, UNC and device paths,
   `.` and `..` segments, Windows reserved names (with any extension,
   including `CONIN$`, `CONOUT$` and superscript COM/LPT names), alternate

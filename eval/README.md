@@ -24,7 +24,9 @@ group's visible tests, and the write scope in `eval/demo/single-model.json`
 there is no planning, triage, review or closing summary; a failed attempt is
 repaired with the previous diff and failure evidence until the run-wide
 rework limit (`maxTotalReworks`), the same limit that bounds a coordinated
-run's repairs. Checks, file limits, freeze and holdout are identical.
+run's repairs. As in arm C, a reply that still fails the schema after the
+gateway's one format repair ends the task instead of being retried. Checks,
+file limits, freeze and holdout are identical.
 
 ## Running
 

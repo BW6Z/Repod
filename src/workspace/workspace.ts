@@ -246,6 +246,14 @@ export async function applyExecutorOutput(
     planned.push({ relative, target, content });
   }
 
+  // A path cannot be both a file and a folder of another file in the same
+  // output; writing both would fail midway with a file-system error.
+  const keys = planned.map((file) => file.relative.toLowerCase());
+  for (const [i, key] of keys.entries()) {
+    const outer = keys.find((other) => key.startsWith(`${other}/`));
+    if (outer) reasons.push(`"${planned[i]!.relative}" lies inside "${outer}", which is also written as a file`);
+  }
+
   // The model echoing the right context_version only proves which input it
   // answered; this proves the workspace still matches that input.
   for (const [relative, recorded] of Object.entries(expected.snapshot)) {
@@ -295,8 +303,12 @@ export async function applyExecutorOutput(
     for (const target of written) {
       const content = previous.get(target);
       try {
-        if (content === null || content === undefined) await rm(target, { force: true });
-        else await writeFile(target, content);
+        if (content === null || content === undefined) {
+          // A folder at the target is not something this write created (only
+          // files are written): leave it rather than report a false failure.
+          const isDir = await lstat(target).then((s) => s.isDirectory(), () => false);
+          if (!isDir) await rm(target, { force: true });
+        } else await writeFile(target, content);
       } catch (restoreError) {
         restoreErrors.push(restoreError);
       }

@@ -6,7 +6,7 @@ import { LedgerWriteError } from "../gateway/gateway.ts";
 import type { LedgerWriter } from "../gateway/ledger.ts";
 import type { FailureKind, ModelRequest, ModelResult, Role } from "../gateway/types.ts";
 import { runCheck as defaultRunCheck, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
-import { PathRejectedError, normalizeRelativePath, resolveAllowedPath } from "../workspace/paths.ts";
+import { PathRejectedError, isProtected, normalizeRelativePath, resolveAllowedPath } from "../workspace/paths.ts";
 import { renderRepoSummary, summarizeRepo } from "../workspace/summary.ts";
 import {
   OutputRejectedError,
@@ -102,9 +102,23 @@ export async function runPipeline(options: PipelineOptions): Promise<RunReport> 
   return new Run(options).execute();
 }
 
+/**
+ * Why a retryable attempt failed, which decides what may follow it:
+ *   - check:           the code was written and a check failed; repair, or
+ *                      escalate to a stronger model
+ *   - rejected-output: the reply broke the program's rules (write scope, a
+ *                      stale version, no files, a bad file request); the
+ *                      reason can be stated, so it may be repaired, but a
+ *                      stronger model is no answer to a broken rule
+ * A reply that still fails the schema after the gateway's one format repair
+ * is not retried at all (repod-plan.md 4.3: repair the format once, never
+ * escalate for it); it stops the task.
+ */
+type RetryCategory = "check" | "rejected-output";
+
 type AttemptResult =
   | { kind: "passed" }
-  | { kind: "retry"; reason: string; evidence: string } // the code is wrong: repair or escalate
+  | { kind: "retry"; category: RetryCategory; reason: string; evidence: string }
   | { kind: "stop-task"; reason: string } // more attempts on this task cannot help
   | { kind: "stop-run"; reason: string }; // the environment or budget is broken: stop everything
 
@@ -126,6 +140,10 @@ class Run {
   private stopReason: string | null = null;
   private reworks = 0;
   private callCounter = 0;
+  // Task results as they finish, kept on the run rather than in a local, so
+  // an exception later in the run cannot lose results already obtained.
+  private readonly outcomes = new Map<string, TaskOutcome>();
+  private runningTask: string | null = null;
   // null once any call in the phase had an unknown cost.
   private readonly phaseCost: Record<CostPhase, number | null> = { coordination: 0, execution: 0, rework: 0, review: 0 };
 
@@ -157,7 +175,7 @@ class Run {
       const knownFiles = await listFiles(this.o.workspace.root);
       const repoSummary = renderRepoSummary(await summarizeRepo(this.o.workspace.root));
       report.plan = single
-        ? this.singleModelPlan(single, new Set(knownFiles))
+        ? await this.singleModelPlan(single, new Set(knownFiles))
         : await this.planAndApprove(repoSummary, new Set(knownFiles));
 
       if (report.plan) {
@@ -174,6 +192,10 @@ class Run {
       const message = error instanceof LedgerWriteError ? error.message : `unexpected error: ${(error as Error).message}`;
       this.stop(message);
     }
+    // Every planned task appears, in plan order, whether or not the run got
+    // that far: finished tasks with their results, the task that was running
+    // when the run stopped as stopped, the rest as skipped.
+    if (report.plan) report.tasks = report.plan.map((t) => this.outcomes.get(t.id) ?? this.notRun(t, t.id === this.runningTask ? "stopped" : "skipped"));
 
     if (this.stopReason) this.problems.unshift(`run stopped: ${this.stopReason}`);
     for (const task of report.tasks) {
@@ -273,9 +295,36 @@ class Run {
     ].join("\n\n");
   }
 
-  private validate(plan: PlanResponse, knownFiles: Set<string>): PlanIssue[] {
+  private async validate(plan: PlanResponse, knownFiles: Set<string>): Promise<PlanIssue[]> {
     const { config, preset, remainingBudgetUsd, checkGroups } = this.o;
-    return validatePlan(plan, { knownFiles, preset, limits: config.limits, pricing: config.pricing, remainingBudgetUsd, checkGroups });
+    const issues = validatePlan(plan, { knownFiles, preset, limits: config.limits, pricing: config.pricing, remainingBudgetUsd, checkGroups });
+    return [...issues, ...(await this.writePathIssues(plan))];
+  }
+
+  /**
+   * What validatePlan cannot see without the file system: a write path that
+   * is an existing folder, or lies below an existing file, cannot be
+   * written. Caught here it costs a re-plan instead of stopping the run.
+   * Paths that already fail the text checks are reported by validatePlan.
+   */
+  private async writePathIssues(plan: PlanResponse): Promise<PlanIssue[]> {
+    const issues: PlanIssue[] = [];
+    for (const task of plan.tasks) {
+      for (const file of task.write_files) {
+        try {
+          if (isProtected(normalizeRelativePath(file))) continue;
+        } catch {
+          continue;
+        }
+        try {
+          await resolveAllowedPath(this.o.workspace.root, file);
+        } catch (error) {
+          if (!(error instanceof PathRejectedError)) throw error;
+          issues.push({ severity: "error", taskId: task.id, message: error.message });
+        }
+      }
+    }
+    return issues;
   }
 
   private async requestPlan(prompt: PromptKind, input: string, knownFiles: Set<string>, mustBePlan: boolean): Promise<PlanResponse | null> {
@@ -284,7 +333,7 @@ class Run {
       this.stop(`planning failed (${result.failure}): ${result.detail}`);
       return null;
     }
-    let errors = this.validate(result.data, knownFiles).filter((i) => i.severity === "error");
+    let errors = (await this.validate(result.data, knownFiles)).filter((i) => i.severity === "error");
     if (mustBePlan && result.data.kind !== "plan") errors.push({ severity: "error", taskId: null, message: "a plan was required" });
 
     if (errors.length > 0) {
@@ -295,7 +344,7 @@ class Run {
         this.stop(`planning failed (${result.failure}): ${result.detail}`);
         return null;
       }
-      errors = this.validate(result.data, knownFiles).filter((i) => i.severity === "error");
+      errors = (await this.validate(result.data, knownFiles)).filter((i) => i.severity === "error");
       if (mustBePlan && result.data.kind !== "plan") errors.push({ severity: "error", taskId: null, message: "a plan was required" });
       if (errors.length > 0) {
         this.stop(`the plan is still invalid: ${errors.map((e) => e.message).join("; ")}`);
@@ -310,9 +359,9 @@ class Run {
    * validated like any plan, so a mistake in it (a protected write, an
    * unknown model) stops the run instead of running something else.
    */
-  private singleModelPlan(task: PlannedTask, knownFiles: Set<string>): PlannedTask[] | null {
+  private async singleModelPlan(task: PlannedTask, knownFiles: Set<string>): Promise<PlannedTask[] | null> {
     const plan: PlanResponse = { kind: "plan", message: "", questions: [], tasks: [task] };
-    const errors = this.validate(plan, knownFiles).filter((i) => i.severity === "error");
+    const errors = (await this.validate(plan, knownFiles)).filter((i) => i.severity === "error");
     if (errors.length > 0) {
       this.stop(`the single-model task is invalid: ${errors.map((e) => e.message).join("; ")}`);
       return null;
@@ -334,10 +383,10 @@ class Run {
       if (!plan) return null;
     }
 
-    const warnings = (p: PlanResponse) => this.validate(p, knownFiles).filter((i) => i.severity === "warning");
+    const warnings = async (p: PlanResponse) => (await this.validate(p, knownFiles)).filter((i) => i.severity === "warning");
     const decisions = (p: PlanResponse) => p.tasks.map((t) => applyCapabilityFloor(t, this.o.preset));
 
-    let review = await this.o.hooks.reviewPlan(plan, decisions(plan), warnings(plan));
+    let review = await this.o.hooks.reviewPlan(plan, decisions(plan), await warnings(plan));
     if (!review.approve) {
       if (this.o.config.limits.maxPlanRevisions < 1) {
         this.stop("the plan was not approved");
@@ -348,7 +397,7 @@ class Run {
       if (!revised) return null;
       plan = revised;
       // The revised plan can only be approved; there is no second revision.
-      review = await this.o.hooks.reviewPlan(plan, decisions(plan), warnings(plan));
+      review = await this.o.hooks.reviewPlan(plan, decisions(plan), await warnings(plan));
       if (!review.approve) {
         this.stop("the revised plan was not approved");
         return null;
@@ -359,23 +408,34 @@ class Run {
 
   // ---- 4: execute -----------------------------------------------------------
 
+  /** The outcome of a task that did not get to run its own attempts. */
+  private notRun(task: PlannedTask, status: "skipped" | "stopped" | "failed", reason?: string): TaskOutcome {
+    return {
+      taskId: task.id, status,
+      // The model it would have run on (after the floor), not Meta's raw choice.
+      model: applyCapabilityFloor(task, this.o.preset).model,
+      attempts: 0, escalated: false, floorReason: null,
+      reason: reason ?? (status === "stopped" ? "the run stopped while this task was running" : "the run had stopped"),
+      reviewRequired: false,
+    };
+  }
+
   private async executeTasks(tasks: PlannedTask[]): Promise<TaskOutcome[]> {
-    const outcomes = new Map<string, TaskOutcome>();
     for (const task of dependencyOrder(tasks)) {
-      const skip = (reason: string): TaskOutcome => ({
-        taskId: task.id, status: "skipped", model: task.model, attempts: 0, escalated: false,
-        floorReason: null, reason, reviewRequired: false,
-      });
-      const failedDependency = task.depends_on.find((dep) => outcomes.get(dep)?.status !== "passed");
-      const outcome = this.stopReason
-        ? skip("the run had stopped")
-        : failedDependency
-          ? skip(`dependency ${failedDependency} did not pass`)
-          : await this.executeTaskWithGroups(task);
-      outcomes.set(task.id, outcome);
+      const failedDependency = task.depends_on.find((dep) => this.outcomes.get(dep)?.status !== "passed");
+      let outcome: TaskOutcome;
+      if (this.stopReason) outcome = this.notRun(task, "skipped");
+      else if (failedDependency) outcome = this.notRun(task, "skipped", `dependency ${failedDependency} did not pass`);
+      else {
+        this.runningTask = task.id;
+        outcome = await this.executeTaskWithGroups(task);
+        this.runningTask = null;
+      }
+      // Recorded before the ledger write, so a failing write cannot lose it.
+      this.outcomes.set(task.id, outcome);
       await this.o.ledger.append({ type: "task_status", taskId: task.id, status: outcome.status, detail: outcome.reason });
     }
-    return tasks.map((t) => outcomes.get(t.id)!);
+    return tasks.map((t) => this.outcomes.get(t.id)!);
   }
 
   /**
@@ -398,7 +458,15 @@ class Run {
 
     const original = new Map<string, Buffer | null>();
     for (const file of task.write_files) {
-      const resolved = await resolveAllowedPath(root, file);
+      let resolved: string;
+      try {
+        resolved = await resolveAllowedPath(root, file);
+      } catch (error) {
+        // Checked at planning time; an earlier task can still have made the
+        // path unusable. Nothing has been changed for this task yet.
+        if (!(error instanceof PathRejectedError)) throw error;
+        return this.notRun(task, "failed", `cannot write ${file}: ${error.message}`);
+      }
       original.set(resolved, await readFile(resolved).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return null;
         throw error;
@@ -469,7 +537,7 @@ class Run {
       }
       const maxForTier = this.tierOf(model) === "strong" ? limits.strongAttemptsPerTask : limits.cheapAttemptsPerTask;
       const canRepair = tierAttempts < maxForTier;
-      const canEscalate = !escalated && limits.maxEscalationsPerTask > 0 && this.tierOf(model) !== "strong";
+      const canEscalate = attempt.category === "check" && !escalated && limits.maxEscalationsPerTask > 0 && this.tierOf(model) !== "strong";
       if (!canRepair && !canEscalate) return finish("failed", `attempts exhausted: ${attempt.reason}`);
 
       const decision = await this.triage(task, model, attempt, canRepair, canEscalate);
@@ -503,7 +571,7 @@ class Run {
       `# Task ${task.id}: ${task.title}`,
       task.description,
       `Model of the failed attempt: ${model}`,
-      `# Failure\n${attempt.reason}\n\n${attempt.evidence.slice(0, MAX_EVIDENCE_CHARS)}`,
+      `# Failure (${attempt.category})\n${attempt.reason}\n\n${attempt.evidence.slice(0, MAX_EVIDENCE_CHARS)}`,
       `# Allowed decisions\n${allowed}`,
     ].join("\n\n");
     const result = await this.callCoordinator("rework", "triage", TriageDecision, "triage_decision", input);
@@ -540,9 +608,18 @@ class Run {
       // The task's own visible tests are always shown: they define "done".
       const ownTests = groupTestPaths(this.o.checkGroups, task.check_groups);
       const readPaths = unique([...task.context_files, ...task.write_files.filter(exists), ...ownTests, ...extraFiles]);
-      const files = await readContextFiles(workspace.root, readPaths);
-      // Taken now and compared right before writing (see applyExecutorOutput).
-      const snapshot = await captureSnapshot(workspace, unique([...readPaths, ...task.write_files]));
+      let files: Awaited<ReturnType<typeof readContextFiles>>;
+      let snapshot: Awaited<ReturnType<typeof captureSnapshot>>;
+      try {
+        files = await readContextFiles(workspace.root, readPaths);
+        // Taken now and compared right before writing (see applyExecutorOutput).
+        snapshot = await captureSnapshot(workspace, unique([...readPaths, ...task.write_files]));
+      } catch (error) {
+        // The plan was checked against the baseline; an earlier task can
+        // still have made a path unusable (a file where a folder is needed).
+        if (!(error instanceof PathRejectedError)) throw error;
+        return { kind: "stop-task", reason: `cannot prepare the task's files: ${error.message}` };
+      }
       const needFilesAllowed = !needFilesUsed && limits.maxNeedFilesRequests > 0;
       const { input, contextVersion } = buildExecutorInput({ task, files, contract, previous, guidance, needFilesAllowed });
 
@@ -550,29 +627,39 @@ class Run {
       const result = await this.callModel(phase, "executor", model, "execute", ExecutorOutput, "executor_output", input, task.id);
       if (!result.ok) {
         if (RUN_STOPPING.has(result.failure)) return { kind: "stop-run", reason: `executor call failed (${result.failure}): ${result.detail}` };
-        if (result.failure === "format") return { kind: "retry", reason: "executor output did not match the schema", evidence: result.detail };
+        if (result.failure === "format") {
+          return { kind: "stop-task", reason: `executor output still did not match the schema after the format repair: ${result.detail}` };
+        }
         return { kind: "stop-task", reason: `executor ${result.failure}: ${result.detail}` };
       }
 
       const output = result.data;
       if (output.need_files.length > 0 && output.files.length === 0) {
-        if (!needFilesAllowed) return { kind: "retry", reason: "asked for more files after the allowance was used", evidence: output.notes };
+        const rejected = (reason: string, evidence: string): AttemptResult => ({ kind: "retry", category: "rejected-output", reason, evidence });
+        if (!needFilesAllowed) return rejected("asked for more files after the allowance was used", output.notes);
         try {
           const missing = output.need_files.filter((f) => !exists(f));
-          if (missing.length > 0) return { kind: "retry", reason: "asked for files that do not exist", evidence: missing.join(", ") };
+          if (missing.length > 0) return rejected("asked for files that do not exist", missing.join(", "));
         } catch (error) {
           if (!(error instanceof PathRejectedError)) throw error;
-          return { kind: "retry", reason: "asked for an invalid path", evidence: error.message };
+          return rejected("asked for an invalid path", error.message);
         }
         needFilesUsed = true;
         extraFiles = output.need_files;
         continue;
       }
 
+      // An output that changes nothing would pass any task whose checks
+      // already pass at the start; it is not a result.
+      if (output.files.length === 0) {
+        return { kind: "retry", category: "rejected-output", reason: "no files returned", evidence: output.notes };
+      }
       try {
         await applyExecutorOutput(workspace, output, { taskId: task.id, contextVersion, allowedWrites: task.write_files, snapshot }, limits);
       } catch (error) {
-        if (error instanceof OutputRejectedError) return { kind: "retry", reason: "executor output was rejected", evidence: error.reasons.join("\n") };
+        if (error instanceof OutputRejectedError) {
+          return { kind: "retry", category: "rejected-output", reason: "executor output was rejected", evidence: error.reasons.join("\n") };
+        }
         if (error instanceof WorkspaceTaintedError) return { kind: "stop-run", reason: error.message };
         throw error;
       }
@@ -598,7 +685,7 @@ class Run {
     }
     return failures.length === 0
       ? { kind: "passed" }
-      : { kind: "retry", reason: `${failures.length} of ${specs.length} checks failed`, evidence: failures.join("\n\n") };
+      : { kind: "retry", category: "check", reason: `${failures.length} of ${specs.length} checks failed`, evidence: failures.join("\n\n") };
   }
 
   // ---- 5: review ------------------------------------------------------------

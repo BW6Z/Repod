@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -191,6 +191,17 @@ describe("write scope, freshness and taint", () => {
     contextVersion: "v1",
     allowedWrites,
     snapshot,
+  });
+
+  test("a path inside another path of the same output is rejected in either order, and nothing is written", async () => {
+    const scope = ["src/nest", "src/nest/inner.ts"];
+    for (const files of [scope, [...scope].reverse()]) {
+      const error = await applyExecutorOutput(workspace, output(files.map((p) => ({ path: p, content: "export {};\n" }))), scoped({}, scope), limits)
+        .catch((e: unknown) => e);
+      assert.ok(error instanceof OutputRejectedError, "a clear rejection, not a file-system error");
+      assert.match(error.reasons.join("\n"), /lies inside "src\/nest"/);
+      await assert.rejects(lstat(path.join(workspace.root, "src", "nest")), "nothing was created");
+    }
   });
 
   test("a file outside the write scope rejects the whole output", async () => {

@@ -320,6 +320,72 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.match(report.problems[0] ?? "", /run stopped: .*no longer usable/);
   });
 
+  test("a reply that still fails the schema after the format repair stops the task: no triage, no escalation", async () => {
+    const gateway = new ScriptedGateway({ plan_response: [plan(task("T1"))], executor_output: [{ fail: "format" }], run_summary: [summary] });
+    const { report } = await run(gateway);
+    assert.equal(report.tasks[0]?.status, "failed");
+    assert.match(report.tasks[0]?.reason ?? "", /after the format repair/);
+    assert.equal(gateway.calls("triage_decision").length, 0);
+    assert.deepEqual(gateway.calls("executor_output").map((r) => r.model), ["muse-spark-1.3"]);
+  });
+
+  test("a rejected output can be repaired but is never a reason to escalate", async () => {
+    const outside = writes({ "src/other.ts": "export {};\n" });
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1"))],
+      executor_output: [outside, outside],
+      triage_decision: [triage("escalate")], // asked for, but not allowed
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+    assert.match(gateway.calls("triage_decision")[0]?.input ?? "", /# Failure \(rejected-output\)[\s\S]*# Allowed decisions\nrepair, stop/);
+    assert.deepEqual(gateway.calls("executor_output").map((r) => r.model), ["muse-spark-1.3", "muse-spark-1.3"]);
+    assert.equal(report.tasks[0]?.escalated, false);
+    assert.match(report.tasks[0]?.reason ?? "", /attempts exhausted/);
+  });
+
+  test("an output with no files is not a result: it is repaired, not passed", async () => {
+    const empty = (request: ModelRequest<unknown>) => ({ ...writes({})(request), notes: "nothing to do" });
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1"))],
+      executor_output: [empty, writes({ "src/math.ts": WITH_MUL })],
+      triage_decision: [triage("repair")],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+    assert.equal(report.tasks[0]?.status, "passed");
+    assert.equal(report.tasks[0]?.attempts, 2);
+    assert.match(gateway.calls("triage_decision")[0]?.input ?? "", /no files returned/);
+  });
+
+  test("an error in a later task keeps the earlier results in the report", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1"), task("T2", { write_files: ["src/extra.ts"] }), task("T3", { write_files: ["src/more.ts"], depends_on: ["T2"] }))],
+      executor_output: [
+        writes({ "src/math.ts": WITH_MUL }),
+        () => {
+          throw new Error("disk exploded");
+        },
+      ],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+    assert.deepEqual(report.tasks.map((t) => [t.taskId, t.status]), [["T1", "passed"], ["T2", "stopped"], ["T3", "skipped"]]);
+    assert.match(report.problems[0] ?? "", /run stopped: unexpected error: disk exploded/);
+    assert.equal(report.tasks[1]?.model, "muse-spark-1.3", "the model after the floor");
+  });
+
+  test("a write path that is an existing folder costs a re-plan, not the run", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1", { write_files: ["src"] })), plan(task("T1"))],
+      executor_output: [writes({ "src/math.ts": WITH_MUL })],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+    assert.equal(report.status, "completed", report.problems.join("\n"));
+    assert.match(gateway.calls("plan_response")[1]?.input ?? "", /Rejected path "src": target is a directory/);
+  });
+
   test("a ledger write failure after a paid call stops the run without understating its cost", async () => {
     const failedWrite = () => {
       const error = new LedgerWriteError("call_end", new Error("disk full"));

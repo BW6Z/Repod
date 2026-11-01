@@ -83,6 +83,15 @@ describe("validatePlan: plans", () => {
     assert.match(errors(unknownProducer, context).join(), /"src\/planner.ts" does not exist/);
   });
 
+  test("rejects a write path inside another write path, within a task or across tasks", () => {
+    const within = plan([task("T1", { write_files: ["src/lib", "SRC/lib/a.ts"] })]);
+    assert.match(errors(within, context).join(), /"SRC\/lib\/a.ts" lies inside "src\/lib" \(T1\)/);
+    const across = plan([task("T1", { write_files: ["src/lib"] }), task("T2", { write_files: ["src/lib/a.ts"] })]);
+    assert.match(errors(across, context).join(), /lies inside "src\/lib" \(T1\)/);
+    // Similar names that are not nested are fine.
+    assert.deepEqual(errors(plan([task("T1", { write_files: ["src/lib.ts", "src/lib/a.ts"] })]), context), []);
+  });
+
   test("rejects missing or unsafe context files and undeclared models", () => {
     assert.match(errors(plan([task("T1", { context_files: ["src/missing.ts"] })]), context).join(), /does not exist/);
     assert.match(errors(plan([task("T1", { context_files: ["../secret.txt"] })]), context).join(), /Rejected path/);

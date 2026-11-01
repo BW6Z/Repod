@@ -105,6 +105,23 @@ function validateTasks(plan: PlanResponse, context: PlanContext): PlanIssue[] {
     }
   }
 
+  // One path cannot be both a file and a folder: across the whole plan, no
+  // write path may lie inside another (src/x and src/x/y.ts). Writing them
+  // would fail midway with a file-system error instead of a clear rejection.
+  const writeKeys = plan.tasks.flatMap((task) =>
+    task.write_files.flatMap((file) => {
+      try {
+        return [{ taskId: task.id, file, key: normalizeRelativePath(file).toLowerCase() }];
+      } catch {
+        return []; // reported above
+      }
+    }),
+  );
+  for (const inner of writeKeys) {
+    const outer = writeKeys.find((w) => inner.key.startsWith(`${w.key}/`));
+    if (outer) error(inner.taskId, `write file "${inner.file}" lies inside "${outer.file}" (${outer.taskId}), which is written as a file`);
+  }
+
   const cycle = findCycle(plan.tasks);
   if (cycle) error(cycle[0] ?? null, `dependency cycle: ${cycle.join(" -> ")}`);
   for (const problem of checkGroupProblems(plan.tasks, context.checkGroups)) error(problem.taskId, problem.message);
