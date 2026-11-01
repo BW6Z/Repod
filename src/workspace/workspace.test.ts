@@ -320,14 +320,14 @@ describe("git isolation in the run workspace", () => {
     assert.match(diff, /\+export const extra = 1;/);
   });
 
-  test("a diff limited to a task's files leaves out everything else, by real spelling and literally", async () => {
+  test("a diff limited to a task's files leaves out everything else, matching paths literally", async () => {
     const ws = await createRunWorkspace(baselineDir, path.join(base, "runs"), "run-scoped-diff");
     await writeFile(path.join(ws.root, "src", "math.ts"), "export const changed = 1;\n");
     await writeFile(path.join(ws.root, "src", "a.ts"), "export const a = 1;\n");
     await writeFile(path.join(ws.root, "src", "[ab].ts"), "export const bracket = 1;\n");
     await writeFile(path.join(ws.root, "test", "copied.test.ts"), "// a visible test copied in\n");
 
-    const own = await diffAgainstBaseline(ws, ["SRC/Math.ts"]); // the plan's spelling may differ in case
+    const own = await diffAgainstBaseline(ws, ["src/math.ts"]);
     assert.match(own, /\+export const changed = 1;/);
     assert.doesNotMatch(own, /src\/a\.ts|copied\.test|bracket/);
 
@@ -337,6 +337,15 @@ describe("git isolation in the run workspace", () => {
 
     assert.equal(await diffAgainstBaseline(ws, []), "", "no paths means no diff, not the whole workspace");
     assert.equal(await diffAgainstBaseline(ws, ["../outside.ts"]), "");
+  });
+
+  // Only where the file system ignores case: there "SRC/Math.ts" in a plan
+  // is the same file as src/math.ts on disk, while git's pathspecs are
+  // case-sensitive. On Linux they are simply two different paths.
+  test("on Windows, a plan's spelling that differs in case still finds the file", { skip: process.platform !== "win32" }, async () => {
+    const ws = await createRunWorkspace(baselineDir, path.join(base, "runs"), "run-scoped-diff-case");
+    await writeFile(path.join(ws.root, "src", "math.ts"), "export const changed = 1;\n");
+    assert.match(await diffAgainstBaseline(ws, ["SRC/Math.ts"]), /\+export const changed = 1;/);
   });
 
   test("a core.fsmonitor command planted in the workspace config never runs", async () => {
