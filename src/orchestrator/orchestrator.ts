@@ -211,19 +211,30 @@ class Run {
     taskId: string | null,
   ): Promise<ModelResult<T>> {
     const maxOutputTokens = this.o.config.limits.maxOutputTokens[role];
-    const result = await this.o.gateway.call({
-      role,
-      model,
-      system: systemPrompt(prompt),
-      input,
-      schema,
-      schemaName,
-      maxOutputTokens,
-      taskId,
-      attemptId: `${taskId ?? "run"}-${prompt}-${++this.callCounter}`,
-    });
-    const spent = this.phaseCost[phase];
-    this.phaseCost[phase] = spent === null || result.costUsd === null ? null : spent + result.costUsd;
+    const addCost = (costUsd: number | null) => {
+      const spent = this.phaseCost[phase];
+      this.phaseCost[phase] = spent === null || costUsd === null ? null : spent + costUsd;
+    };
+    let result: ModelResult<T>;
+    try {
+      result = await this.o.gateway.call({
+        role,
+        model,
+        system: systemPrompt(prompt),
+        input,
+        schema,
+        schemaName,
+        maxOutputTokens,
+        taskId,
+        attemptId: `${taskId ?? "run"}-${prompt}-${++this.callCounter}`,
+      });
+    } catch (error) {
+      // The call may have been paid for before its ledger write failed; the
+      // run stops on this error, but its report must not understate cost.
+      if (error instanceof LedgerWriteError) addCost(error.costUsd);
+      throw error;
+    }
+    addCost(result.costUsd);
     if (!result.ok && RUN_STOPPING.has(result.failure)) this.stop(`${prompt} call failed (${result.failure}): ${result.detail}`);
     return result;
   }

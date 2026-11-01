@@ -86,6 +86,19 @@ describe("LedgerWriter", () => {
     });
   });
 
+  test("an event the reader would reject is never written and takes no sequence number", async () => {
+    await withRuns(async (runsDir, ledger) => {
+      await assert.rejects(
+        ledger.append({ type: "call_end", attemptId: "a", outcome: "ok", usage: null, costUsd: 0.1, durationMs: -5 }),
+        /refusing to write an invalid call_end event: durationMs/,
+      );
+      await assert.rejects(ledger.append({ type: "call_start", ...start, attemptId: "b", reservedUsd: Number.NaN }), /reservedUsd/);
+      await ledger.append({ type: "task_status", taskId: "T1", status: "x", detail: null });
+      assert.deepEqual((await readEvents(ledger.file)).map((e) => [e.type, e.seq]), [["task_status", 1]]);
+      assert.equal(await totalSpentUsd(runsDir), 0);
+    });
+  });
+
   test("a failed append does not block later appends", async () => {
     const base = await mkdtemp(path.join(tmpdir(), "repod-ledger-"));
     try {
@@ -144,5 +157,15 @@ describe("SpendTracker", () => {
     const r = tracker.tryReserve(0.1);
     assert.ok(r.ok);
     assert.throws(() => tracker.settle(r.reservation, -1), RangeError);
+  });
+
+  test("an invalid cost still settles, at the full reservation, so no hold is left open", () => {
+    const tracker = new SpendTracker(1, 10, 0);
+    const r = tracker.tryReserve(0.3);
+    assert.ok(r.ok);
+    assert.throws(() => tracker.settle(r.reservation, Number.NaN), RangeError);
+    assert.ok(Math.abs(tracker.runSpent - 0.3) < 1e-9, "billed at the reservation, not zero");
+    assert.throws(() => tracker.settle(r.reservation, 0.1), /already/);
+    assert.equal(tracker.tryReserve(0.7).ok, true, "0.3 spent + 0.7 fits the run budget: nothing is held");
   });
 });

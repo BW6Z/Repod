@@ -240,13 +240,68 @@ describe("ModelGateway: budget", () => {
     assert.equal(adapter.requests.length, 1);
   });
 
-  test("a failed call_end write after sending still keeps the spend", async () => {
+  test("a failed call_end write after sending still keeps the spend and reports it", async () => {
     ledger = new FlakyLedger(path.join(dir, `events-${++counter}.jsonl`), 2);
     const spend = new SpendTracker(3, 10, 0);
     const adapter = new FakeAdapter([ok('{"capital":"Paris"}')]);
-    await assert.rejects(gateway(adapter, spend).call(request()), /simulated ledger failure/);
+    const error = await gateway(adapter, spend).call(request()).catch((e: unknown) => e);
+    assert.ok(error instanceof LedgerWriteError);
+    assert.equal(error.event, "call_end");
+    assert.match(error.message, /simulated ledger failure/);
     assert.equal(adapter.requests.length, 1);
     assert.ok(spend.runSpent > 0, "the request went out, so its cost must stay recorded");
+    assert.equal(error.costUsd, spend.runSpent, "the caller learns what was already spent");
+    // Only call_start reached the ledger, so the spend total still counts the reservation.
+    assert.deepEqual((await readEvents(ledger.file)).map((e) => e.type), ["call_start"]);
+  });
+
+  test("a failed call_refused write is a LedgerWriteError too", async () => {
+    ledger = new FlakyLedger(path.join(dir, `events-${++counter}.jsonl`), 1);
+    const error = await gateway(new FakeAdapter([]), new SpendTracker(3, 10, 9.999)).call(request()).catch((e: unknown) => e);
+    assert.ok(error instanceof LedgerWriteError);
+    assert.equal(error.event, "call_refused");
+  });
+
+  test("a request that provably never left is not billed, and is still retried", async () => {
+    const spend = new SpendTracker(3, 10, 0);
+    const unsent = () => new ProviderError("network", "connect ECONNREFUSED", { retryable: true, sent: "no" });
+    const adapter = new FakeAdapter([unsent(), unsent(), ok('{"capital":"Paris"}')]);
+    const result = await gateway(adapter, spend).call(request());
+    assert.equal(result.ok, true);
+    assert.equal(adapter.requests.length, 3);
+    const events = await readEvents(ledger.file);
+    const ends = events.filter((e) => e.type === "call_end");
+    assert.deepEqual(ends.map((e) => e.type === "call_end" && [e.outcome, e.costUsd === 0]), [["network", true], ["network", true], ["ok", false]]);
+    // Only the successful request costs anything, in the tracker and in the result.
+    const okEnd = ends[2];
+    assert.equal(okEnd?.type === "call_end" ? okEnd.costUsd : null, spend.runSpent);
+    assert.equal(result.costUsd, spend.runSpent);
+  });
+
+  test("implausible usage from an adapter is billed at the reservation and keeps the ledger readable", async () => {
+    const spend = new SpendTracker(3, 10, 0);
+    const adapter = new FakeAdapter([{ ...ok('{"capital":"Paris"}'), usage: { ...usage, outputTokens: -50000 } }]);
+    const result = await gateway(adapter, spend).call(request());
+    assert.equal(result.ok, true);
+    assert.equal(result.costUsd, null, "unknown, not negative");
+    const events = await readEvents(ledger.file); // would throw on an unreadable line
+    const start = events.find((e) => e.type === "call_start");
+    assert.equal(spend.runSpent, start?.type === "call_start" ? start.reservedUsd : NaN);
+    assert.equal(spend.tryReserve(3 - spend.runSpent).ok, true, "no hold is left behind");
+  });
+
+  test("a wall-clock step back during a call does not produce a negative duration", async () => {
+    const realNow = Date.now;
+    let now = realNow();
+    Date.now = () => (now -= 5000); // every reading is five seconds earlier
+    try {
+      const result = await gateway(new FakeAdapter([ok('{"capital":"Paris"}')])).call(request());
+      assert.equal(result.ok, true);
+    } finally {
+      Date.now = realNow;
+    }
+    const end = (await readEvents(ledger.file)).find((e) => e.type === "call_end");
+    assert.ok(end?.type === "call_end" && end.durationMs >= 0);
   });
 
   test("models outside the preset are a configuration error", async () => {

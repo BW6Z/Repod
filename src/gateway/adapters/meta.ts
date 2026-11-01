@@ -36,9 +36,27 @@ export class MetaAdapter implements ProviderAdapter {
 
   constructor(options: MetaAdapterOptions) {
     if (!options.apiKey) throw new Error("MODEL_API_KEY is not set (see .env.example)");
+    // Checked here, before any request: fetch rejects such a header value
+    // with an error message that quotes the whole header, key included.
+    if (!/^[\x21-\x7e]+$/.test(options.apiKey)) {
+      throw new Error("MODEL_API_KEY contains spaces or control characters; check .env");
+    }
+    const baseUrl = options.baseUrl ?? META_BASE_URL;
+    let protocol: string;
+    try {
+      protocol = new URL(baseUrl).protocol;
+    } catch {
+      throw new Error(`MODEL_API_BASE_URL is not a valid URL: ${baseUrl}`);
+    }
+    if (protocol !== "https:" && protocol !== "http:") throw new Error(`MODEL_API_BASE_URL must be http or https: ${baseUrl}`);
     this.apiKey = options.apiKey;
-    this.baseUrl = options.baseUrl ?? META_BASE_URL;
+    this.baseUrl = baseUrl;
     this.fetchImpl = options.fetch ?? fetch;
+  }
+
+  /** Every error message leaves the adapter without the key, whatever produced it. */
+  private redact(message: string): string {
+    return message.replaceAll(this.apiKey, "***");
   }
 
   async call(request: AdapterRequest): Promise<AdapterResponse> {
@@ -68,12 +86,23 @@ export class MetaAdapter implements ProviderAdapter {
         // so retrying would pay again for the same work.
         throw new ProviderError("network", "Request to Meta timed out", { retryable: false });
       }
-      // Connection failures before a response: usually safe to retry. The
-      // gateway still bills the reservation in case the request got through.
-      throw new ProviderError("network", `Request to Meta failed: ${messageOf(error)}`, { retryable: true });
+      // Connection failures before a response: usually safe to retry. Only a
+      // refused connection or an unresolved host proves the request never
+      // left; for anything else (a reset, a dropped socket) the gateway
+      // bills the reservation in case the request got through.
+      const cause = (error as { cause?: unknown }).cause;
+      const causeText = cause instanceof Error ? cause.message || String((cause as { code?: unknown }).code ?? cause.name) : null;
+      const detail = causeText ? `${messageOf(error)}: ${causeText}` : messageOf(error);
+      throw new ProviderError("network", this.redact(`Request to Meta failed: ${detail}`), {
+        retryable: true,
+        sent: neverSent(cause) ? "no" : "maybe",
+      });
     }
 
-    if (!response.ok) throw await httpError(response);
+    if (!response.ok) {
+      const error = await httpError(response);
+      throw new ProviderError(error.kind, this.redact(error.message), { retryable: error.retryable, retryAfterMs: error.retryAfterMs });
+    }
 
     let body: ResponsesBody;
     try {
@@ -90,12 +119,31 @@ function isAbort(error: unknown): boolean {
   return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }
 
+// Socket error codes that mean no connection to the provider was made, so no
+// request bytes can have reached it.
+const NOT_SENT_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"]);
+
+/**
+ * True only with direct evidence from fetch's underlying socket error.
+ * Connecting to a host with several addresses reports an AggregateError,
+ * which counts only if every address failed that way.
+ */
+function neverSent(cause: unknown): boolean {
+  const code = (cause as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && NOT_SENT_CODES.has(code)) return true;
+  if (cause instanceof AggregateError && cause.errors.length > 0) {
+    return cause.errors.every((e) => NOT_SENT_CODES.has((e as { code?: unknown } | null)?.code as string));
+  }
+  return false;
+}
+
 /** Maps a non-2xx response to a classified, sanitized error (the key is never included). */
 async function httpError(response: Response): Promise<ProviderError> {
   const text = await response.text().catch(() => "");
   let message = text.slice(0, 500);
   try {
-    message = (JSON.parse(text) as ResponsesBody).error?.message ?? message;
+    const parsed = (JSON.parse(text) as ResponsesBody).error?.message;
+    if (typeof parsed === "string") message = parsed.slice(0, 500);
   } catch {
     // Non-JSON error body; keep the raw text excerpt.
   }
@@ -158,21 +206,34 @@ export function parseResponsesBody(body: ResponsesBody): AdapterResponse {
   };
 }
 
+const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+
 /**
  * Converts Meta usage to the gateway convention (inputTokens = uncached only).
  *
+ * Usage that is not plausible returns null, and the gateway then bills the
+ * full reservation: a count that is negative, fractional or missing, or one
+ * that contradicts the convention below (more cached than total input, more
+ * reasoning than total output). Such values would otherwise produce a wrong
+ * or negative cost, or a ledger line that cannot be read back.
+ *
  * TODO: Meta's docs do not say whether input_tokens already includes
  * cached_tokens. This follows the OpenAI Responses convention (included) and
- * subtracts it; verify with the first probe call that hits the cache.
+ * subtracts it; verify with the first probe call that hits the cache. If
+ * cached tokens turn out to be reported separately, the "cached <= input"
+ * check must change with it.
  */
 export function normalizeUsage(usage: ResponsesBody["usage"]): Usage | null {
-  if (!usage || typeof usage.input_tokens !== "number" || typeof usage.output_tokens !== "number") return null;
+  if (!usage || !isCount(usage.input_tokens) || !isCount(usage.output_tokens)) return null;
   const cached = usage.input_tokens_details?.cached_tokens ?? 0;
+  const reasoning = usage.output_tokens_details?.reasoning_tokens ?? null;
+  if (!isCount(cached) || cached > usage.input_tokens) return null;
+  if (reasoning !== null && (!isCount(reasoning) || reasoning > usage.output_tokens)) return null;
   return {
-    inputTokens: Math.max(0, usage.input_tokens - cached),
+    inputTokens: usage.input_tokens - cached,
     outputTokens: usage.output_tokens, // reasoning tokens are counted within this total
     cachedInputTokens: cached,
-    reasoningTokens: usage.output_tokens_details?.reasoning_tokens ?? null,
+    reasoningTokens: reasoning,
     raw: usage,
   };
 }

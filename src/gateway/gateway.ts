@@ -2,7 +2,7 @@ import type { Limits, Preset, Price, PricingTable } from "../config/schema.ts";
 import { ProviderError, type AdapterResponse, type ProviderAdapter } from "./adapters/adapter.ts";
 import { reservationUsd, standardizedCostUsd } from "./cost.ts";
 import { toStrictJsonSchema } from "./json-schema.ts";
-import type { LedgerWriter } from "./ledger.ts";
+import { recordableUsage, type LedgerEvent, type LedgerWriter } from "./ledger.ts";
 import type { SpendTracker } from "./spend.ts";
 import type { FailureKind, ModelRequest, ModelResult, Usage } from "./types.ts";
 
@@ -27,15 +27,28 @@ function estimateInputTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text, "utf8") / 2);
 }
 
+type EventType = LedgerEvent["type"];
+
 /**
- * The ledger could not record the start of a call, so the call was not sent.
- * This is an infrastructure fault for the orchestrator to stop on, not a
- * model failure to retry or escalate.
+ * The ledger could not record an event of a model call. This is an
+ * infrastructure fault for the orchestrator to stop on, not a model failure
+ * to retry or escalate.
+ *
+ * If call_start failed, nothing was sent. If a later event failed, the
+ * request may have been billed: its cost is already settled in the spend
+ * tracker and, to be safe, the ledger still counts its reservation (a start
+ * without an end). `costUsd` carries what the whole gateway call cost so far,
+ * so the run's report does not understate it.
  */
 export class LedgerWriteError extends Error {
-  constructor(cause: unknown) {
-    super(`Could not record call_start; the request was not sent (${cause instanceof Error ? cause.message : String(cause)})`, { cause });
+  readonly event: EventType;
+  costUsd: number | null = 0; // filled in by the gateway; null when unknown
+
+  constructor(event: EventType, cause: unknown) {
+    const consequence = event === "call_start" ? "the request was not sent" : "the run must stop";
+    super(`Could not record ${event}; ${consequence} (${cause instanceof Error ? cause.message : String(cause)})`, { cause });
     this.name = "LedgerWriteError";
+    this.event = event;
   }
 }
 
@@ -114,7 +127,13 @@ export class ModelGateway {
     let input = request.input;
 
     for (let formatAttempt = 1; ; formatAttempt++) {
-      const sent = await this.sendWithRetries(request, input, jsonSchema, adapter, price, `${request.attemptId}.f${formatAttempt}`, totals);
+      let sent: SendResult<T>;
+      try {
+        sent = await this.sendWithRetries(request, input, jsonSchema, adapter, price, `${request.attemptId}.f${formatAttempt}`, totals);
+      } catch (error) {
+        if (error instanceof LedgerWriteError) error.costUsd = totals.reportedCost;
+        throw error;
+      }
       if (sent.ok) {
         return { ok: true, data: sent.data, usage: totals.usage, costUsd: totals.reportedCost };
       }
@@ -175,7 +194,7 @@ export class ModelGateway {
 
     const reserved = spend.tryReserve(reservedUsd);
     if (!reserved.ok) {
-      await ledger.append({ type: "call_refused", ...base, reason: reserved.reason });
+      await this.record({ type: "call_refused", ...base, reason: reserved.reason });
       return { ok: false, failure: "budget", detail: reserved.reason, retryable: false, retryAfterMs: null };
     }
 
@@ -186,9 +205,12 @@ export class ModelGateway {
       // The request is not sent either: a paid call must never go out without
       // a recorded start, or a crash could leave spend nobody can see.
       spend.release(reserved.reservation);
-      throw new LedgerWriteError(error);
+      throw new LedgerWriteError("call_start", error);
     }
-    const started = Date.now();
+    // A monotonic clock: a wall-clock step back (time sync) would give a
+    // negative duration, which the ledger rejects.
+    const started = performance.now();
+    const elapsedMs = () => Math.round(performance.now() - started);
 
     let response: AdapterResponse;
     try {
@@ -203,20 +225,33 @@ export class ModelGateway {
         signal: AbortSignal.timeout(limits.requestTimeoutMs),
       });
     } catch (error) {
-      // The provider may still bill a request that failed on our side, so the
-      // full reservation is recorded as spent.
       const known = error instanceof ProviderError;
       const failure: FailureKind = known ? error.kind : "network";
       const detail = error instanceof Error ? error.message : String(error);
-      spend.settle(reserved.reservation, reservedUsd);
-      totals.add(null, null, reservedUsd);
-      await ledger.append({ type: "call_end", attemptId, outcome: failure, usage: null, costUsd: null, durationMs: Date.now() - started });
+      if (known && error.sent === "no") {
+        // The adapter has direct evidence that nothing left this machine
+        // (refused connection, unresolved host): nothing can be billed.
+        spend.release(reserved.reservation);
+        totals.add(null, 0, reservedUsd);
+        await this.record({ type: "call_end", attemptId, outcome: failure, usage: null, costUsd: 0, durationMs: elapsedMs() });
+      } else {
+        // The provider may still bill a request that failed on our side, so
+        // the full reservation is recorded as spent.
+        spend.settle(reserved.reservation, reservedUsd);
+        totals.add(null, null, reservedUsd);
+        await this.record({ type: "call_end", attemptId, outcome: failure, usage: null, costUsd: null, durationMs: elapsedMs() });
+      }
       return { ok: false, failure, detail, retryable: known && error.retryable, retryAfterMs: known ? error.retryAfterMs : null };
     }
 
-    const costUsd = response.usage ? standardizedCostUsd(response.usage, price) : null;
+    // Implausible usage, or a cost that is not a finite non-negative number,
+    // is treated as unknown and billed at the reservation, like a reply
+    // without usage.
+    const usage = recordableUsage(response.usage);
+    const computed = usage ? standardizedCostUsd(usage, price) : null;
+    const costUsd = computed !== null && Number.isFinite(computed) && computed >= 0 ? computed : null;
     spend.settle(reserved.reservation, costUsd ?? reservedUsd);
-    totals.add(response.usage, costUsd, reservedUsd);
+    totals.add(usage, costUsd, reservedUsd);
 
     // Validate before logging, so the ledger records what really happened:
     // a reply that arrived but does not match the schema is "format", not "ok".
@@ -233,8 +268,17 @@ export class ModelGateway {
     }
 
     const outcome = result.ok ? "ok" : result.failure;
-    await ledger.append({ type: "call_end", attemptId, outcome, usage: response.usage, costUsd, durationMs: Date.now() - started });
+    await this.record({ type: "call_end", attemptId, outcome, usage, costUsd, durationMs: elapsedMs() });
     return result;
+  }
+
+  /** Appends a call_refused or call_end event; any failure becomes a LedgerWriteError. */
+  private async record(body: Parameters<LedgerWriter["append"]>[0] & { type: "call_refused" | "call_end" }): Promise<void> {
+    try {
+      await this.options.ledger.append(body);
+    } catch (error) {
+      throw new LedgerWriteError(body.type, error);
+    }
   }
 }
 

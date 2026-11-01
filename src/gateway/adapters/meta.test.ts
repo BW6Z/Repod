@@ -117,6 +117,58 @@ describe("MetaAdapter", () => {
   test("refuses to start without an API key", () => {
     assert.throws(() => new MetaAdapter({ apiKey: "" }), /MODEL_API_KEY/);
   });
+
+  test("a key with spaces or control characters is rejected before any request, without echoing it", () => {
+    for (const apiKey of ["sk-abc\ndef", "sk abc", "sk-abc\u0000"]) {
+      assert.throws(() => new MetaAdapter({ apiKey }), (error: Error) => /control characters/.test(error.message) && !error.message.includes("sk-abc"));
+    }
+  });
+
+  test("an invalid or non-http base URL is rejected at construction", () => {
+    assert.throws(() => new MetaAdapter({ apiKey: "k", baseUrl: "not a url" }), /not a valid URL/);
+    assert.throws(() => new MetaAdapter({ apiKey: "k", baseUrl: "ftp://example.com/v1" }), /http or https/);
+  });
+
+  test("only a refused connection or an unresolved host counts as never sent", async () => {
+    const failing = (cause: unknown) =>
+      (async () => {
+        throw new TypeError("fetch failed", { cause });
+      }) as typeof fetch;
+    const code = (c: string) => Object.assign(new Error(`connect ${c}`), { code: c });
+    const cases: Array<[unknown, "no" | "maybe"]> = [
+      [code("ENOTFOUND"), "no"],
+      [code("EAI_AGAIN"), "no"],
+      [code("ECONNREFUSED"), "no"],
+      // localhost tries every address; all of them were refused.
+      [new AggregateError([code("ECONNREFUSED"), code("ECONNREFUSED")], ""), "no"],
+      [new AggregateError([code("ECONNREFUSED"), code("ECONNRESET")], ""), "maybe"],
+      [code("ECONNRESET"), "maybe"],
+      [new Error("other side closed"), "maybe"],
+      [undefined, "maybe"],
+    ];
+    for (const [cause, sent] of cases) {
+      const error = await new MetaAdapter({ apiKey: "k", fetch: failing(cause) }).call(request).catch((e: unknown) => e);
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.sent, sent, String((cause as Error | undefined)?.message));
+      assert.equal(error.retryable, true);
+    }
+  });
+
+  test("error messages never contain the key, even when the provider echoes it", async () => {
+    const { impl } = fakeFetch(401, { error: { message: "bad key LLM_secret_123" } });
+    const error = await new MetaAdapter({ apiKey: "LLM_secret_123", fetch: impl }).call(request).catch((e: unknown) => e);
+    assert.ok(error instanceof ProviderError);
+    assert.equal(error.kind, "rejected");
+    assert.doesNotMatch(error.message, /LLM_secret_123/);
+    assert.match(error.message, /\*\*\*/);
+  });
+
+  test("a non-string or very long JSON error message is handled", async () => {
+    const odd = await new MetaAdapter({ apiKey: "k", fetch: fakeFetch(400, { error: { message: { nested: true } } }).impl }).call(request).catch((e: Error) => e);
+    assert.doesNotMatch((odd as Error).message, /\[object Object\]/);
+    const long = await new MetaAdapter({ apiKey: "k", fetch: fakeFetch(400, { error: { message: "x".repeat(5000) } }).impl }).call(request).catch((e: Error) => e);
+    assert.ok((long as Error).message.length < 700);
+  });
 });
 
 describe("parseResponsesBody", () => {
@@ -142,6 +194,26 @@ describe("parseResponsesBody", () => {
 });
 
 describe("helpers", () => {
+  test("implausible usage is reported as unknown instead of producing a wrong cost", () => {
+    const usage = (input: unknown, output: unknown, cached?: unknown, reasoning?: unknown) =>
+      normalizeUsage({
+        input_tokens: input as number,
+        output_tokens: output as number,
+        ...(cached === undefined ? {} : { input_tokens_details: { cached_tokens: cached as number } }),
+        ...(reasoning === undefined ? {} : { output_tokens_details: { reasoning_tokens: reasoning as number } }),
+      });
+    assert.equal(usage(10.5, 5), null);
+    assert.equal(usage(10, -50000), null);
+    assert.equal(usage(10, "5"), null);
+    assert.equal(usage(10, 5, 11), null, "more cached than total input");
+    assert.equal(usage(10, 5, -1), null);
+    assert.equal(usage(10, 5, 0, 6), null, "more reasoning than total output");
+    assert.equal(usage(10, 5, 0, 1.5), null);
+    assert.deepEqual(usage(10, 5, 10, 5) && { ...usage(10, 5, 10, 5), raw: undefined }, {
+      inputTokens: 0, outputTokens: 5, cachedInputTokens: 10, reasoningTokens: 5, raw: undefined,
+    });
+  });
+
   test("cached tokens are subtracted so they are not billed twice", () => {
     const usage = normalizeUsage({ input_tokens: 1000, output_tokens: 10, input_tokens_details: { cached_tokens: 400 } });
     assert.equal(usage?.inputTokens, 600);

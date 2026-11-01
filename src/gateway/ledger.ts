@@ -1,7 +1,7 @@
 import { appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { FAILURE_KINDS, ROLES } from "./types.ts";
+import { FAILURE_KINDS, ROLES, type Usage } from "./types.ts";
 
 // Ledger entries are validated at runtime when read back: a well-formed JSON
 // line with a missing or non-numeric amount would otherwise turn total spend
@@ -16,6 +16,16 @@ const UsageRecord = z.object({
   reasoningTokens: Count.nullable(),
   raw: z.unknown(),
 });
+
+/**
+ * The usage, if it is one the ledger can record (non-negative integer
+ * counts); otherwise null, which the gateway bills as unknown at the full
+ * reservation. Adapters normalize usage already; this keeps one bad adapter
+ * from writing a line that blocks every later spend total.
+ */
+export function recordableUsage(usage: Usage | null): Usage | null {
+  return usage !== null && UsageRecord.safeParse(usage).success ? usage : null;
+}
 
 const base = {
   runId: z.string().min(1),
@@ -78,6 +88,11 @@ type LedgerEventBody = EventBody<LedgerEvent>;
  * sequence numbers. A failed append rejects only its own promise; later
  * appends still run, so one transient error cannot silently stop all
  * accounting for the rest of the run.
+ *
+ * Every event is checked against the same schema readEvents applies, before
+ * it is written. A line the reader would reject makes every later spend
+ * total fail (by design), so it must never reach the file: the append is
+ * rejected instead, and nothing is written.
  */
 export class LedgerWriter {
   readonly file: string;
@@ -92,8 +107,14 @@ export class LedgerWriter {
   }
 
   append(body: LedgerEventBody): Promise<void> {
-    const event = { runId: this.runId, seq: ++this.seq, ts: new Date().toISOString(), ...body } as LedgerEvent;
-    const write = this.tail.catch(() => {}).then(() => appendEvent(this.file, event));
+    const event = { runId: this.runId, seq: this.seq + 1, ts: new Date().toISOString(), ...body };
+    const parsed = LedgerEventSchema.safeParse(event);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return Promise.reject(new Error(`refusing to write an invalid ${body.type} event: ${issue?.path.join(".") || "event"} ${issue?.message ?? "is invalid"}`));
+    }
+    this.seq++; // only valid events take a sequence number, so there are no gaps
+    const write = this.tail.catch(() => {}).then(() => appendEvent(this.file, parsed.data));
     this.tail = write;
     return write;
   }

@@ -114,11 +114,18 @@ export class SpendTracker {
     return { ok: true, reservation: { amountUsd, closed: false } };
   }
 
-  /** The request was sent: releases the hold and records what it cost. */
+  /**
+   * The request was sent: releases the hold and records what it cost.
+   *
+   * An invalid cost (NaN, infinite, negative) still settles, at the full
+   * reservation, before the error is raised: the request may have been
+   * billed, so its hold must neither stay open nor turn into zero spend.
+   */
   settle(reservation: Reservation, actualUsd: number): void {
-    requireAmount("actual cost", actualUsd);
+    const valid = Number.isFinite(actualUsd) && actualUsd >= 0;
     this.close(reservation);
-    this.runSpentUsd += actualUsd;
+    this.runSpentUsd += valid ? actualUsd : reservation.amountUsd;
+    if (!valid) requireAmount("actual cost", actualUsd);
   }
 
   /**

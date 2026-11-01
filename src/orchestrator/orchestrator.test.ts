@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { loadConfig } from "../config/load.ts";
 import type { RepodConfig } from "../config/schema.ts";
+import { LedgerWriteError } from "../gateway/gateway.ts";
 import { LedgerWriter, readEvents } from "../gateway/ledger.ts";
 import type { FailureKind, ModelRequest, ModelResult } from "../gateway/types.ts";
 import { standardChecks, type CheckResult } from "../verifier/verifier.ts";
@@ -317,6 +318,22 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.ok(workspace.tainted);
     assert.equal(report.tasks[1]?.status, "skipped");
     assert.match(report.problems[0] ?? "", /run stopped: .*no longer usable/);
+  });
+
+  test("a ledger write failure after a paid call stops the run without understating its cost", async () => {
+    const failedWrite = () => {
+      const error = new LedgerWriteError("call_end", new Error("disk full"));
+      error.costUsd = 0.25; // what the gateway had already settled for this call
+      throw error;
+    };
+    const gateway = new ScriptedGateway({ plan_response: [plan(task("T1"))], executor_output: [failedWrite] });
+    const { report } = await run(gateway);
+
+    assert.equal(report.status, "incomplete");
+    assert.match(report.problems[0] ?? "", /run stopped: Could not record call_end/);
+    assert.equal(report.costByPhase.execution?.toFixed(2), "0.25");
+    assert.equal(report.costUsd?.toFixed(3), "0.251", "planning $0.001 plus the failed call's $0.25");
+    assert.equal(gateway.calls("run_summary").length, 0, "no further call once the ledger fails");
   });
 
   test("a budget refusal stops the run instead of retrying or escalating", async () => {

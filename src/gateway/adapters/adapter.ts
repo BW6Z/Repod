@@ -25,18 +25,32 @@ export interface AdapterResponse {
   usage: Usage | null;
 }
 
-/** Adapters translate provider errors into this so the gateway can classify them. */
+/**
+ * Adapters translate provider errors into this so the gateway can classify them.
+ *
+ * Two independent questions: may the gateway retry (`retryable`), and could
+ * the provider have received and billed the request (`sent`)? "no" is only
+ * for failures with direct evidence that nothing left this machine, such as
+ * a refused connection or an unresolved host name; anything less certain is
+ * "maybe", and the gateway then bills the full reservation.
+ */
 export class ProviderError extends Error {
   readonly kind: FailureKind;
   readonly retryable: boolean;
   readonly retryAfterMs: number | null;
+  readonly sent: "no" | "maybe";
 
-  constructor(kind: FailureKind, message: string, options: { retryable: boolean; retryAfterMs?: number | null }) {
+  constructor(
+    kind: FailureKind,
+    message: string,
+    options: { retryable: boolean; retryAfterMs?: number | null; sent?: "no" | "maybe" },
+  ) {
     super(message);
     this.name = "ProviderError";
     this.kind = kind;
     this.retryable = options.retryable;
     this.retryAfterMs = options.retryAfterMs ?? null;
+    this.sent = options.sent ?? "maybe";
   }
 }
 

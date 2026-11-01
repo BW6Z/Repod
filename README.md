@@ -161,7 +161,9 @@ docs/          architecture and compliance notes
   If a recorded ledger is corrupt, malformed (for example an event with a
   missing or non-numeric amount) or unreadable, no paid call is made until
   it is resolved. If the start of a call cannot be recorded, the call is not
-  sent. Only one paid command (`run` or `probe`) runs at a time: each takes
+  sent, and a request that provably never left the machine (refused
+  connection, unresolved host) is not billed. Only one paid command (`run`,
+  `probe` or `experiment`) runs at a time: each takes
   `runs/paid-run.lock` before reading past spend, and a second one is
   refused. If a command was killed (for example with Ctrl+C) the lock stays;
   make sure no Repod command is running, check `npm run repod -- spend`,

@@ -136,8 +136,13 @@ Meta is called 2 to 6 times per run in normal operation (plus triage).
    is released and the call is not sent (`LedgerWriteError`): a paid request
    never goes out without a recorded start.
 5. Settle the reservation: at list price when usage and rates are known,
-   otherwise, or when the call failed after it was sent, at the full
-   reservation.
+   otherwise, or when the call failed after it may have been sent, at the
+   full reservation. Usage that is not plausible (fractional or negative
+   counts, more cached than total input, more reasoning than total output)
+   counts as unknown. Only a failure with direct evidence that nothing left
+   the machine (a refused connection or an unresolved host name) releases
+   the reservation and is logged with a cost of 0; a reset or dropped
+   connection, or our own timeout, is billed.
 6. Classify the reply: truncated, refused, invalid JSON or schema mismatch
    (`format`), or valid. Append `call_end` with that outcome, so the ledger
    records validation results, not just transport success.
@@ -159,11 +164,20 @@ missing directory or ledger counts as nothing spent: invalid JSON, a
 malformed event, an end event with neither a cost nor a matching start, or an
 unreadable directory raises an error, and no paid call is made until it is
 resolved. `SpendTracker` also rejects NaN, infinite and negative amounts
-itself. A failed ledger append does not block later appends.
+itself; an invalid cost still settles at the full reservation, so no hold
+stays open. A failed ledger append does not block later appends.
+
+Every event is validated against the same schema before it is written, so
+the gateway can never write a line its own reader would reject (a negative
+duration after a clock change, for instance; durations use a monotonic
+clock). Any failed write of a call's events stops the run with a
+`LedgerWriteError`. If the call may already have been billed, the error
+carries the cost settled so far, and the report includes it; the ledger then
+holds a start without an end, which the total counts at the reservation.
 
 Each run's `SpendTracker` compares against a snapshot of past spend, so two
 processes starting together could both pass against the same snapshot. The
-paid commands (`run` and `probe`) therefore take one lock,
+paid commands (`run`, `probe` and `experiment`) therefore take one lock,
 `runs/paid-run.lock`, created atomically (exclusive create) before the
 ledgers are read and removed when the command ends, also on errors. A second
 paid command is refused rather than queued. A lock left by a process that
