@@ -11,6 +11,13 @@ dist/
 # Per-run working copies and event logs are runtime artifacts, not source.
 runs/
 
+# Holdout tests and the reference implementation stay outside this public
+# repository until the experiments are over (models must never see them).
+# These rules stop an early commit if either is copied in by mistake; remove
+# the first one when the holdout tests are published after the experiments.
+eval/holdout/**/*.ts
+reference/
+
 *.log
 
 # OS-generated metadata is local to each developer's machine.

@@ -18,8 +18,9 @@ Rules for tasks:
 - Keep each task small with one responsibility. Use depends_on when a task needs another task's result, for example docs that describe a new function.
 - complexity: simple (mechanical, a few lines), medium (some reasoning, one module), complex (algorithms, edge cases, design). impact: low (cosmetic or docs), medium (a feature others use), high (core behavior; errors break callers).
 - acceptance: concrete, checkable criteria such as "tsc passes" or "visible tests pass".
-- context_files: existing files from the repository summary that the executor must read.
+- context_files: files the executor must read. Each must be in the repository summary or in the write_files of a task this one depends on, directly or through other dependencies.
 - write_files: every file the task may change or create. New files are allowed. Never list tests, package.json, package-lock.json, tsconfig.json or .gitattributes.
+- check_groups: if the input lists check groups, assign every group to exactly one task: the task that implements what the group tests. A task whose group requires another group must depend on the task that owns that group. Leave it empty when no groups are listed.
 - model: choose from the executor models listed in the input. The program raises any choice below a task's required tier, so pick honestly: strong for complex or high-impact work, cheaper models for simple work.
 - reason: one short sentence on why that model fits.
 - escalate_if: when a stronger model should take over.`;
@@ -34,6 +35,7 @@ Reply with one JSON object matching the schema:
 - files: every file you change or create, each with its complete new content (whole-file replacement, LF line endings). Unchanged files must not be listed.
 - Only change or create the files the task allows. Never modify tests, package.json, package-lock.json, tsconfig.json or .gitattributes.
 - Keep to the interface contract and the acceptance criteria. Do not change public APIs the task does not mention.
+- Test files shown under test/ define what "done" means for this task: make them pass. They cannot be changed.
 - need_files: only when you cannot finish without seeing other existing files, and only if the task says you may ask. In that case return no files.
 - notes: at most a few sentences for the coordinator. No explanations outside the JSON.
 

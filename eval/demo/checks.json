@@ -1,0 +1,23 @@
+{
+  "availableChecks": ["typecheck", "visible-tests", "doc-examples", "doc-references"],
+  "groups": [
+    {
+      "name": "planner",
+      "description": "planOrder: order, stages and the three planning errors (SPEC.md section 2)",
+      "tests": ["planner.test.ts"],
+      "requires": []
+    },
+    {
+      "name": "cli",
+      "description": "the plan command: output formats, errors and exit codes (SPEC.md section 3)",
+      "tests": ["cli.test.ts"],
+      "requires": ["planner"]
+    },
+    {
+      "name": "docs",
+      "description": "examples/basic.ts output, README Planning section, CHANGELOG entry (SPEC.md section 4)",
+      "tests": ["docs.test.ts"],
+      "requires": ["planner", "cli"]
+    }
+  ]
+}

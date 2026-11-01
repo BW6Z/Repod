@@ -41,6 +41,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # The demo baseline must pass its own tests before any run starts from it.
+      - run: npm run test:sample
       - run: npm run repod -- check-config
 
   audit:
@@ -68,11 +70,18 @@ jobs:
             echo "::error::.env is tracked by git. Remove it and rotate any keys it contained."
             exit 1
           fi
+      - name: No holdout tests or reference implementation are published early
+        run: |
+          if [ -n "$(git ls-files 'eval/holdout/*.ts' 'reference/')" ]; then
+            echo "::error::Holdout tests or the reference implementation are tracked. They must stay private until the experiments are over."
+            exit 1
+          fi
       - name: Required files exist
         run: |
           missing=0
           for f in README.md .env.example .gitignore package-lock.json \
-                   config/limits.json config/pricing.json docs/compliance.md; do
+                   config/limits.json config/pricing.json docs/compliance.md \
+                   sample-repo/SPEC.md eval/demo/request.md eval/demo/checks.json; do
             if [ ! -f "$f" ]; then
               echo "::error::Required file missing: $f"
               missing=1

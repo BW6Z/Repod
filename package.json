@@ -10,7 +10,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p sample-repo/tsconfig.json",
     "test": "node --test \"src/**/*.test.ts\"",
-    "check": "npm run typecheck && npm test",
+    "test:sample": "node --test \"sample-repo/test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test && npm run test:sample",
     "repod": "node src/cli/main.ts"
   },
   "dependencies": {

@@ -30,6 +30,8 @@ export interface RunReport {
   status: "completed" | "incomplete";
   plan: PlannedTask[] | null;
   tasks: TaskOutcome[];
+  // Check groups whose owning task did not pass: not verified, never "passed".
+  pendingCheckGroups: string[];
   findings: Array<ReviewFinding & { taskId: string }>;
   finalChecks: CheckResult[]; // dev checks re-run on the integrated result
   holdout: CheckResult[];

@@ -17,6 +17,7 @@ before(async () => {
     limits: config.limits,
     pricing: config.pricing,
     remainingBudgetUsd: 100,
+    checkGroups: [],
   };
 });
 
@@ -32,6 +33,7 @@ function task(id: string, overrides: Partial<PlannedTask> = {}): PlannedTask {
     acceptance: ["tsc passes"],
     context_files: ["src/index.ts"],
     write_files: ["src/index.ts"],
+    check_groups: [],
     depends_on: [],
     model: "muse-spark-1.3",
     reason: "",
@@ -62,6 +64,25 @@ describe("validatePlan: plans", () => {
     assert.match(errors(cyclic, context).join(), /dependency cycle/);
   });
 
+  test("context files may come from what a direct or transitive dependency writes", () => {
+    const producer = task("T1", { write_files: ["src/planner.ts"] });
+    // Case differs on purpose: lookups follow Windows path rules.
+    const direct = task("T2", { depends_on: ["T1"], write_files: ["src/cli.ts"], context_files: ["src/Planner.ts"] });
+    const transitive = task("T3", { depends_on: ["T2"], write_files: ["README.md"], context_files: ["src/planner.ts", "src/cli.ts"] });
+    assert.deepEqual(validatePlan(plan([producer, direct, transitive]), context), []);
+  });
+
+  test("context files written only by unrelated, later or the same task are rejected", () => {
+    const unrelated = plan([task("T1", { write_files: ["src/planner.ts"] }), task("T2", { context_files: ["src/planner.ts"] })]);
+    assert.match(errors(unrelated, context).join(), /"src\/planner.ts" does not exist/);
+    const reversed = plan([task("T1", { depends_on: ["T2"] }), task("T2", { write_files: ["src/cli.ts"], context_files: ["src/cli.ts"] })]);
+    assert.match(errors(reversed, context).join(), /"src\/cli.ts" does not exist/);
+    const own = plan([task("T1", { write_files: ["src/new.ts"], context_files: ["src/new.ts"] })]);
+    assert.match(errors(own, context).join(), /"src\/new.ts" does not exist/);
+    const unknownProducer = plan([task("T1", { depends_on: ["T9"], context_files: ["src/planner.ts"] })]);
+    assert.match(errors(unknownProducer, context).join(), /"src\/planner.ts" does not exist/);
+  });
+
   test("rejects missing or unsafe context files and undeclared models", () => {
     assert.match(errors(plan([task("T1", { context_files: ["src/missing.ts"] })]), context).join(), /does not exist/);
     assert.match(errors(plan([task("T1", { context_files: ["../secret.txt"] })]), context).join(), /Rejected path/);
@@ -89,6 +110,38 @@ describe("validatePlan: plans", () => {
     // though Spark alone would have looked affordable.
     const issues = validatePlan(plan([task("T1", { complexity: "complex", model: "muse-spark-1.3" })]), { ...context, remainingBudgetUsd: 1 });
     assert.equal(issues.filter((i) => i.severity === "warning").length, 1);
+  });
+});
+
+describe("validatePlan: check groups", () => {
+  const groups = [
+    { name: "core", description: "core", tests: ["core.test.ts"], requires: [] },
+    { name: "cli", description: "cli", tests: ["cli.test.ts"], requires: ["core"] },
+  ];
+  const withGroups = () => ({ ...context, checkGroups: groups });
+
+  test("accepts every group assigned once, with required groups done first", () => {
+    const p = plan([task("T1", { check_groups: ["core"] }), task("T2", { check_groups: ["cli"], depends_on: ["T1"] })]);
+    assert.deepEqual(errors(p, withGroups()), []);
+  });
+
+  test("rejects unassigned, doubly assigned and unknown groups", () => {
+    assert.match(errors(plan([task("T1", { check_groups: ["core"] })]), withGroups()).join(), /"cli" is not assigned/);
+    const twice = plan([task("T1", { check_groups: ["core", "cli"] }), task("T2", { check_groups: ["core"], depends_on: ["T1"] })]);
+    assert.match(errors(twice, withGroups()).join(), /"core" is assigned to more than one task/);
+    assert.match(errors(plan([task("T1", { check_groups: ["docs"] })]), context).join(), /unknown check group "docs"/);
+  });
+
+  test("rejects a group whose task does not depend on the task of a required group", () => {
+    const p = plan([task("T1", { check_groups: ["core"] }), task("T2", { check_groups: ["cli"] })]);
+    assert.match(errors(p, withGroups()).join(), /T2 must depend on T1/);
+    // Indirect dependencies count.
+    const indirect = plan([
+      task("T1", { check_groups: ["core"] }),
+      task("T2", { depends_on: ["T1"] }),
+      task("T3", { check_groups: ["cli"], depends_on: ["T2"] }),
+    ]);
+    assert.deepEqual(errors(indirect, withGroups()), []);
   });
 });
 

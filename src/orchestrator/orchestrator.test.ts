@@ -85,7 +85,7 @@ function task(id: string, overrides: Partial<PlannedTask> = {}): PlannedTask {
   return {
     id, type: "implement", title: `Task ${id}`, description: "Add mul().",
     complexity: "simple", impact: "low", capabilities: ["code"], acceptance: ["tsc passes", "visible tests pass"],
-    context_files: ["src/math.ts"], write_files: ["src/math.ts"], depends_on: [],
+    context_files: ["src/math.ts"], write_files: ["src/math.ts"], check_groups: [], depends_on: [],
     model: "muse-spark-1.3", reason: "Simple change.", escalate_if: "checks fail twice",
     ...overrides,
   };
@@ -121,6 +121,8 @@ async function run(gateway: ScriptedGateway, overrides: Partial<PipelineOptions>
     holdoutChecks: [],
     availableChecks: allChecks,
     remainingBudgetUsd: 100,
+    checkGroups: [],
+    visibleTestsDir: null,
     hooks: experimentHooks,
     ...overrides,
   });
@@ -244,6 +246,39 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.equal(report.manifest, null, "an incomplete run is not frozen");
   });
 
+  test("a task can read a file its dependency created, with the content actually written", async () => {
+    const created = "export const PLANNER = 1;\n";
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(
+        task("T1", { write_files: ["src/planner.ts"] }),
+        task("T2", { depends_on: ["T1"], context_files: ["src/planner.ts"] }),
+      )],
+      executor_output: [writes({ "src/planner.ts": created }), writes({ "src/math.ts": WITH_MUL })],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+
+    assert.deepEqual(report.tasks.map((t) => t.status), ["passed", "passed"], report.problems.join("\n"));
+    assert.ok(gateway.calls("executor_output")[1]?.input.includes(created));
+  });
+
+  test("a dependency that passes without creating a promised file stops the dependent task before any call", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(
+        task("T1", { write_files: ["src/math.ts", "src/planner.ts"] }),
+        task("T2", { depends_on: ["T1"], context_files: ["src/planner.ts"] }),
+      )],
+      // T1 passes but only changes math.ts.
+      executor_output: [writes({ "src/math.ts": WITH_MUL })],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+
+    assert.deepEqual(report.tasks.map((t) => t.status), ["passed", "failed"]);
+    assert.match(report.tasks[1]?.reason ?? "", /missing before execution.*src\/planner\.ts/);
+    assert.equal(gateway.calls("executor_output").length, 1);
+  });
+
   test("a code task without runnable tests is not executed", async () => {
     const gateway = new ScriptedGateway({ plan_response: [plan(task("T1"))], run_summary: [summary] });
     const { report } = await run(gateway, { availableChecks: new Set<CheckKind>(["typecheck"]) });
@@ -280,6 +315,71 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.equal(report.tasks[1]?.status, "skipped");
     assert.equal(gateway.calls("triage_decision").length, 0);
     assert.equal(gateway.calls("run_summary").length, 0, "no further paid call once the budget is exhausted");
+  });
+});
+
+describe("runPipeline: check groups", () => {
+  const WITH_MUL_SUB = WITH_MUL + "export function sub(a: number, b: number): number {\n  return a - b;\n}\n";
+  const groups = [
+    { name: "mul", description: "mul()", tests: ["mul.test.ts"], requires: [] },
+    { name: "sub", description: "sub()", tests: ["sub.test.ts"], requires: ["mul"] },
+  ];
+  let visibleTestsDir: string;
+
+  before(async () => {
+    visibleTestsDir = path.join(base, "visible");
+    await mkdir(visibleTestsDir, { recursive: true });
+    const testFor = (fn: string, expected: number) =>
+      `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { ${fn} } from '../src/math.ts';\ntest('${fn}', () => assert.equal(${fn}(5, 3), ${expected}));\n`;
+    await writeFile(path.join(visibleTestsDir, "mul.test.ts"), testFor("mul", 15));
+    await writeFile(path.join(visibleTestsDir, "sub.test.ts"), testFor("sub", 2));
+  });
+
+  test("each task is checked with its own tests and earlier ones, never later ones", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1", { check_groups: ["mul"] }), task("T2", { check_groups: ["sub"], depends_on: ["T1"] }))],
+      executor_output: [writes({ "src/math.ts": WITH_MUL }), writes({ "src/math.ts": WITH_MUL_SUB })],
+      run_summary: [summary],
+    });
+    const { report, workspace } = await run(gateway, { checkGroups: groups, visibleTestsDir });
+
+    // Without groups, sub.test.ts would break T1's type check: sub() does not exist yet.
+    assert.equal(report.status, "completed", report.problems.join("\n"));
+    const [first, second] = gateway.calls("executor_output").map((r) => r.input);
+    assert.match(first!, /=== FILE: test\/mul\.test\.ts ===/);
+    assert.doesNotMatch(first!, /sub\.test\.ts/);
+    assert.match(second!, /=== FILE: test\/sub\.test\.ts ===/);
+    assert.deepEqual(report.pendingCheckGroups, []);
+    await readFile(path.join(workspace.root, "test", "sub.test.ts")); // both groups are in the final result
+  });
+
+  test("a failed task's files and tests are rolled back so they cannot fail unrelated later tasks", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(
+        task("T1", { check_groups: ["mul"] }),
+        task("T2", { check_groups: ["sub"], depends_on: ["T1"] }),
+        task("T3", { context_files: [], write_files: ["src/extra.ts"] }),
+      )],
+      executor_output: [writes({ "src/math.ts": BROKEN }), writes({ "src/extra.ts": "export const extra = 1;\n" })],
+      triage_decision: [triage("stop")],
+      run_summary: [summary],
+    });
+    const { report, workspace } = await run(gateway, { checkGroups: groups, visibleTestsDir });
+    // T3 does not depend on T1; it passes because T1's broken code and its
+    // failing tests were removed when T1 failed.
+    assert.deepEqual(report.tasks.map((t) => t.status), ["failed", "skipped", "passed"], report.problems.join("\n"));
+    assert.deepEqual(report.pendingCheckGroups, ["mul", "sub"]);
+    assert.equal(await readFile(path.join(workspace.root, "src", "math.ts"), "utf8"), BASELINE["src/math.ts"]);
+    await assert.rejects(readFile(path.join(workspace.root, "test", "mul.test.ts")));
+  });
+
+  test("a plan that leaves a group unassigned is rejected", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1", { check_groups: ["mul"] })), plan(task("T1", { check_groups: ["mul"] }))],
+    });
+    const { report } = await run(gateway, { checkGroups: groups, visibleTestsDir });
+    assert.equal(report.plan, null);
+    assert.match(report.problems.join("\n"), /"sub" is not assigned/);
   });
 });
 

@@ -1,0 +1,7 @@
+- SPEC.md is the authority on behavior. When in doubt, follow it exactly.
+- Everything public is exported from `src/index.ts`; tests import only from there.
+- Planning code (`planOrder`, `PlanResult`, `DuplicateTaskError`, `UnknownDependencyError`, `CycleError`) lives in `src/planner.ts` and is re-exported from `src/index.ts`.
+- New errors extend `TaskPlanError` from `src/errors.ts`, pass their code to its constructor, and expose the fields SPEC.md names.
+- The `plan` command is `src/cli.ts`; the example is `examples/basic.ts`.
+- Node.js 24 runs the TypeScript files directly: ES modules, relative imports with the `.ts` extension, and only erasable TypeScript syntax (no enums, namespaces or constructor parameter properties).
+- No runtime dependencies; use only Node.js built-in modules.

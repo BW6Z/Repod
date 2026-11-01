@@ -13,7 +13,8 @@ experiment in `eval/`, not a claim this project makes in advance.
 
 ## Status
 
-This is an early skeleton. Do not treat planned items as working features.
+The pipeline is implemented and tested offline; it has not yet run against
+real models. Do not treat planned items as working features.
 
 | Area | Status |
 |---|---|
@@ -27,17 +28,21 @@ This is an early skeleton. Do not treat planned items as working features.
 | CLI `check-config`, `spend` | Implemented |
 | CLI `probe` | Implemented, not yet run against the live API |
 | Capability floor with free/cheap/strong tiers; presets limit which models may execute (`src/orchestrator/routing.ts`) | Implemented, tested |
-| Check and review requirements per task type (`reviewRequirement`) | Implemented, tested, applied by the pipeline (docs checks themselves are planned) |
+| Check and review requirements per task type (`reviewRequirement`) | Implemented, tested, applied by the pipeline |
+| Check groups: each task is checked with its own visible tests and those of finished tasks; a failed task's files and tests are rolled back (`src/orchestrator/check-groups.ts`) | Implemented, tested |
 | Plan validation: ids, dependencies, cycles, context files, models, budget warning (`src/orchestrator/plan-validation.ts`) | Implemented, tested |
 | Executor input assembly and context versioning (`src/orchestrator/context.ts`) | Implemented, tested |
 | Repository summary for planning (`src/workspace/summary.ts`) | Implemented, tested |
 | Pipeline: planning with clarifying questions and one plan revision, execution with repair and one escalation, review, freeze, summary (`src/orchestrator/orchestrator.ts`) | Implemented, tested end to end with a scripted fake gateway and real checks; **not yet run with real models** |
 | System prompts (`src/orchestrator/prompts.ts`) | First versions; to be tuned against real model behavior |
 | Write scope per task, pre-write freshness check, tainted workspaces (`src/workspace`) | Implemented, tested |
-| CLI `run`, `experiment` | Planned (blocked on the sample repository) |
+| CLI `run`: the demo request on a copy of the sample repo, interactive or `--experiment` | Implemented; **not yet run with real models** |
+| CLI `experiment` (comparison arms) | Planned |
 | Run workspace, path allowlist, diff, hashing (`src/workspace`) | Implemented, tested (Windows paths with spaces, junction escapes, links into protected folders) |
 | Check runner (`src/verifier`) | Implemented, tested (timeouts kill the process tree; API keys withheld) |
-| Sample repository and tests | Planned (placeholder) |
+| Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
+| Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
+| Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
 | Experiment runner | Planned |
 | Server and web UI | Planned |
 
@@ -61,14 +66,24 @@ reproducible installs. Ignore rules do not remove files already tracked by Git.
 ## Commands
 
 ```bash
-npm run check                    # type check + unit tests
+npm run check                    # type check + unit tests + sample repo tests
 npm run typecheck
 npm test
+npm run test:sample              # the demo baseline's own tests
 npm run repod -- check-config    # validate config/
 npm run repod -- spend           # recorded spend across runs vs. total budget
 npm run repod -- probe           # one tiny live request; costs real money
 npm run repod -- probe --model muse-wonder-1.0
+npm run repod -- run             # the demo request, interactive; costs real money
+npm run repod -- run --experiment --holdout <dir>
 ```
+
+`run` copies `sample-repo/` into `runs/<runId>/workspace`, gives Meta the
+request in `eval/demo/request.md`, and lets you answer clarifying questions
+and approve the plan (or send it back once). `--experiment` uses default
+answers and approves automatically; `--preset quality` switches presets;
+`--holdout <dir>` runs the holdout tests in `<dir>` once after the result is
+frozen. The report is written to `runs/<runId>/report.json`.
 
 Note there is only one `--` (it tells npm where its own options end). The CLI
 rejects unknown commands, unknown options and stray arguments instead of
@@ -83,10 +98,11 @@ model.
 `.github/workflows/ci.yml` runs on pushes to `development` (docs-only
 changes skipped), on every pull request to `main`, and on manual dispatch:
 
-- `check` on Ubuntu and Windows: `npm ci`, type check, unit tests, config
-  validation
+- `check` on Ubuntu and Windows: `npm ci`, type check, unit tests, sample
+  repo tests, config validation
 - `audit`: `npm audit --audit-level=high`
-- `repo-hygiene`: `.env` is not tracked; required files exist
+- `repo-hygiene`: `.env` is not tracked; holdout tests and the reference
+  implementation are not tracked; required files exist
 
 CI uses a read-only token, needs no secrets, and never calls model APIs.
 
@@ -99,13 +115,14 @@ src/
   cli/         command-line entry point
   config/      config schemas and loader
   gateway/     single entry point for model calls; adapters per provider
-  orchestrator/ run state, output schemas, routing floor, plan validation
+  orchestrator/ pipeline, output schemas, routing floor, plan validation, check groups
   workspace/   isolated run copies, path allowlist, diffs
   verifier/    fixed checks run as child processes
+  eval/        demo kit loader and holdout preparation
   server/      planned read-only API
 web/           planned UI
-sample-repo/   demo baseline that runs modify (copies only)
-eval/          experiment protocol; holdout tests
+sample-repo/   demo baseline that runs modify (copies only); SPEC.md holds its rules
+eval/          experiment protocol; demo kit (eval/demo); holdout tests after the experiments
 docs/          architecture and compliance notes
 ```
 
@@ -135,7 +152,11 @@ docs/          architecture and compliance notes
   If a recorded ledger is corrupt, malformed (for example an event with a
   missing or non-numeric amount) or unreadable, no paid call is made until
   it is resolved. If the start of a call cannot be recorded, the call is not
-  sent.
+  sent. Only one paid command (`run` or `probe`) runs at a time: each takes
+  `runs/paid-run.lock` before reading past spend, and a second one is
+  refused. If a command was killed (for example with Ctrl+C) the lock stays;
+  make sure no Repod command is running, check `npm run repod -- spend`,
+  then delete the lock file.
 
 Environment variables (see `.env.example`): `MODEL_API_KEY` for the Meta Model
 API. `ANTHROPIC_API_KEY` is reserved for the optional Anthropic adapter and is
@@ -150,6 +171,8 @@ process environment, so child processes (checks, git) never inherit them.
   `incomplete` status means the output token limit was hit.
 - Spend figures are list-price estimates. Hackathon credits are not tracked
   as a separate balance.
+- Paid commands run one at a time (see the paid-run lock above); there is no
+  shared budget for concurrent runs.
 - Running checks on model-written code is not sandboxed beyond a separate
   working copy, an allowlisted environment without API keys, and a timeout
   that kills the whole process tree. Network and filesystem access are not
@@ -160,6 +183,11 @@ process environment, so child processes (checks, git) never inherit them.
   platform for running arbitrary code and only runs its bundled sample.
 - Blocking review findings are reported and leave the run incomplete; they
   are not fixed automatically yet.
+- Holdout tests and the reference implementation used to validate them are
+  kept outside this public repository until the experiments are over, so
+  they cannot be checked out from here yet.
+- Running time of the sample's 20,000-task cases is not a pass condition and
+  is not reported yet.
 - Competition compliance has not been verified; see `docs/compliance.md`.
 
 ## Documentation

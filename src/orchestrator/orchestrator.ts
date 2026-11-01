@@ -1,10 +1,12 @@
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { ZodType } from "zod";
 import type { Preset, RepodConfig, Tier } from "../config/schema.ts";
 import { LedgerWriteError } from "../gateway/gateway.ts";
 import type { LedgerWriter } from "../gateway/ledger.ts";
 import type { FailureKind, ModelRequest, ModelResult, Role } from "../gateway/types.ts";
 import { runCheck as defaultRunCheck, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
-import { PathRejectedError, normalizeRelativePath } from "../workspace/paths.ts";
+import { PathRejectedError, normalizeRelativePath, resolveAllowedPath } from "../workspace/paths.ts";
 import { renderRepoSummary, summarizeRepo } from "../workspace/summary.ts";
 import {
   OutputRejectedError,
@@ -17,6 +19,7 @@ import {
   snapshotManifest,
   type RunWorkspace,
 } from "../workspace/workspace.ts";
+import { groupTestPaths, type CheckGroup } from "./check-groups.ts";
 import { buildExecutorInput, readContextFiles, type PreviousAttempt } from "./context.ts";
 import { validatePlan, type PlanIssue } from "./plan-validation.ts";
 import { systemPrompt, type PromptKind } from "./prompts.ts";
@@ -69,6 +72,8 @@ export interface PipelineOptions {
   contract: string; // interface conventions of the repository being changed
   devChecks: CheckSpec[]; // run after every attempt and once more on the final result
   holdoutChecks: CheckSpec[]; // run once after freezing; never shown to a model
+  checkGroups: CheckGroup[]; // visible test groups, added to test/ as their tasks run
+  visibleTestsDir: string | null; // folder holding the groups' test files
   availableChecks: ReadonlySet<CheckKind>;
   remainingBudgetUsd: number; // for the plan's budget warning
   hooks: PipelineHooks;
@@ -128,6 +133,7 @@ class Run {
       status: "incomplete",
       plan: null,
       tasks: [],
+      pendingCheckGroups: [],
       findings: [],
       finalChecks: [],
       holdout: [],
@@ -162,6 +168,11 @@ class Run {
     for (const task of report.tasks) {
       if (task.status !== "passed") this.problems.push(`${task.taskId} ${task.status}: ${task.reason ?? "no reason recorded"}`);
     }
+    // A group counts as checked only when the task that owns it passed.
+    const passed = new Set(report.tasks.filter((t) => t.status === "passed").map((t) => t.taskId));
+    report.pendingCheckGroups = this.o.checkGroups
+      .filter((g) => !report.plan?.some((t) => t.check_groups.includes(g.name) && passed.has(t.id)))
+      .map((g) => g.name);
     report.status = report.plan !== null && this.problems.length === 0 ? "completed" : "incomplete";
     report.costUsd = this.costKnown ? this.costUsd : null;
 
@@ -225,14 +236,22 @@ class Run {
       repoSummary,
       "# Executor models",
       models.join("\n"),
+      ...(this.o.checkGroups.length > 0
+        ? [
+            "# Check groups (assign every group to exactly one task in check_groups)",
+            this.o.checkGroups
+              .map((g) => `- ${g.name}: ${g.description}${g.requires.length ? ` (requires: ${g.requires.join(", ")})` : ""}`)
+              .join("\n"),
+          ]
+        : []),
       "# Limits",
       `At most ${config.limits.maxClarifyingQuestions} clarifying questions, asked once.`,
     ].join("\n\n");
   }
 
   private validate(plan: PlanResponse, knownFiles: Set<string>): PlanIssue[] {
-    const { config, preset, remainingBudgetUsd } = this.o;
-    return validatePlan(plan, { knownFiles, preset, limits: config.limits, pricing: config.pricing, remainingBudgetUsd });
+    const { config, preset, remainingBudgetUsd, checkGroups } = this.o;
+    return validatePlan(plan, { knownFiles, preset, limits: config.limits, pricing: config.pricing, remainingBudgetUsd, checkGroups });
   }
 
   private async requestPlan(prompt: PromptKind, input: string, knownFiles: Set<string>, mustBePlan: boolean): Promise<PlanResponse | null> {
@@ -313,11 +332,54 @@ class Run {
         ? skip("the run had stopped")
         : failedDependency
           ? skip(`dependency ${failedDependency} did not pass`)
-          : await this.executeTask(task);
+          : await this.executeTaskWithGroups(task);
       outcomes.set(task.id, outcome);
       await this.o.ledger.append({ type: "task_status", taskId: task.id, status: outcome.status, detail: outcome.reason });
     }
     return tasks.map((t) => outcomes.get(t.id)!);
+  }
+
+  /**
+   * Runs a task between two pieces of bookkeeping.
+   *
+   * Before: the task's check groups are added to the workspace's test folder,
+   * so its checks include its own tests and those of finished tasks, but
+   * never tests for work that comes later; and the current content of its
+   * write scope is recorded.
+   *
+   * After a task that did not pass: its files are restored and its tests are
+   * removed, so a failed task leaves nothing behind that could fail unrelated
+   * later tasks. The report lists its groups as pending.
+   */
+  private async executeTaskWithGroups(task: PlannedTask): Promise<TaskOutcome> {
+    const root = this.o.workspace.root;
+    const tests = groupTestPaths(this.o.checkGroups, task.check_groups);
+    if (tests.length > 0 && this.o.visibleTestsDir === null) throw new Error("check groups are configured without a visible tests folder");
+    const target = (file: string) => path.join(root, ...file.split("/"));
+
+    const original = new Map<string, Buffer | null>();
+    for (const file of task.write_files) {
+      const resolved = await resolveAllowedPath(root, file);
+      original.set(resolved, await readFile(resolved).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }));
+    }
+    await mkdir(path.join(root, "test"), { recursive: true });
+    for (const file of tests) {
+      await copyFile(path.join(this.o.visibleTestsDir!, path.basename(file)), target(file));
+    }
+
+    const outcome = await this.executeTask(task);
+
+    if (outcome.status !== "passed" && !this.o.workspace.tainted) {
+      for (const [file, content] of original) {
+        if (content === null) await rm(file, { force: true });
+        else await writeFile(file, content);
+      }
+      for (const file of tests) await rm(target(file), { force: true });
+    }
+    return outcome;
   }
 
   private tierOf(model: string): Tier | undefined {
@@ -422,7 +484,15 @@ class Run {
     for (;;) {
       const existing = new Set((await listFiles(workspace.root)).map((f) => f.toLowerCase()));
       const exists = (file: string) => existing.has(normalizeRelativePath(file).toLowerCase());
-      const readPaths = unique([...task.context_files, ...task.write_files.filter(exists), ...extraFiles]);
+      // The plan may name a file a dependency was going to create. If it was
+      // not created, stop here instead of calling the executor without it.
+      const missing = task.context_files.filter((f) => !exists(f));
+      if (missing.length > 0) {
+        return { kind: "stop-task", reason: `context file(s) missing before execution, not created by the tasks it depends on: ${missing.join(", ")}` };
+      }
+      // The task's own visible tests are always shown: they define "done".
+      const ownTests = groupTestPaths(this.o.checkGroups, task.check_groups);
+      const readPaths = unique([...task.context_files, ...task.write_files.filter(exists), ...ownTests, ...extraFiles]);
       const files = await readContextFiles(workspace.root, readPaths);
       // Taken now and compared right before writing (see applyExecutorOutput).
       const snapshot = await captureSnapshot(workspace, unique([...readPaths, ...task.write_files]));

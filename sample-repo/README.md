@@ -1,19 +1,33 @@
-# Sample repository (demo baseline)
+# task-planner-sample
 
-A small TypeScript library that Repod modifies during demos and experiments.
-Every run starts from a copy of this directory at a fixed commit; Repod never
-edits it in place.
+A small TypeScript library for describing tasks that depend on each other.
 
-## Planned demo request
+The full rules are in [SPEC.md](SPEC.md).
 
-Add dependency-order planning to the library, with a CLI, runnable examples,
-API comments, README and changelog updates. The core ordering logic (stable
-ordering, unknown dependencies, duplicate ids, cycle detection, no input
-mutation, defined error types) is the hard part; the rest is routine work.
+## Parsing tasks
 
-## Status
+`parseTasks` turns untrusted input, such as parsed JSON, into tasks and
+checks their format:
 
-- Baseline code: types only (placeholder).
-- Behavior rules: not written yet. They must be complete before holdout tests
-  are written, because holdout tests may only check stated rules.
-- Visible tests: not written yet (`test/`).
+```ts
+import { parseTasks } from "./src/index.ts";
+
+const tasks = parseTasks([
+  { id: "compile" },
+  { id: "test", dependsOn: ["compile"], priority: 1 },
+]);
+console.log(tasks.length);
+```
+
+Missing `dependsOn` becomes `[]` and missing `priority` becomes `0`. Invalid
+input throws `InvalidTaskError`, which carries the position of the first
+invalid item in `index`. All library errors extend `TaskPlanError` and have a
+`code`.
+
+## Development
+
+Requires Node.js 24 or later. TypeScript files run directly with Node.
+
+```bash
+node --test "test/**/*.test.ts"
+```

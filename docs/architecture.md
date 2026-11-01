@@ -38,7 +38,10 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
    runs use default answers and approve automatically. After this point the
    user no longer converses with Meta.
 4. **Execute**: tasks in dependency order (a task whose dependency did not
-   pass is skipped), one writer at a time. Each attempt reads the task's
+   pass is skipped), one writer at a time. Before a task runs, the visible
+   tests of its check groups are added to the workspace and its write scope
+   is recorded; if it does not pass, its files are restored and its tests
+   removed, so a failed task cannot fail unrelated later tasks. Each attempt reads the task's
    context and existing write files, snapshots its read and write scope,
    calls the executor, writes the output (scope and freshness checked), and
    runs the dev checks. Failures are classified:
@@ -70,6 +73,15 @@ Meta is called 2 to 6 times per run in normal operation (plus triage).
 
 - **Tiers**: `free` < `cheap` < `strong`. Free-tier models are opt-in per
   preset (`allowFreeModels`).
+- **Check groups**: trusted configuration (`eval/demo/checks.json`) splits
+  the visible tests into named groups with an order (`requires`). Meta
+  assigns every group to exactly one task (`check_groups`); plan validation
+  rejects unknown, unassigned or doubly assigned groups, and a group whose
+  task does not depend, directly or indirectly, on the tasks of the groups
+  it requires. A task is checked with its own groups and those of finished
+  tasks, never with tests for later work; its own test files are always in
+  its executor input. Before freezing, every group runs together. Groups
+  whose task did not pass are reported as pending, never as passed.
 - **Executor models**: only models assigned to a preset role may execute
   tasks. The coordinator's model is not an executor option unless a role uses
   it, so the `quality` preset runs every task on its strong model.
@@ -87,14 +99,19 @@ Meta is called 2 to 6 times per run in normal operation (plus triage).
   always reviewed.
 - **Plan validation** (after every planning call, including revisions):
   question count and defaults, unique task ids, known and non-circular
-  dependencies, context files that exist and pass the path allowlist, models
+  dependencies, context files that pass the path allowlist and either exist
+  or are in the `write_files` of a task the reader depends on (directly or
+  transitively; never its own, an unrelated or a later task's), models
   declared in the preset, acceptance criteria present. A worst-case output
   cost above the remaining budget is a warning, not an error; it prices each
   task on the model the floor will use and counts allowed escalations.
 - **Executor input**: task, acceptance criteria, interface contract and full
-  contents of the selected files, plus, for repairs and escalations, the
-  previous diff, failure evidence (first 8000 characters) and Meta's
-  guidance. The reply rules (protected paths, whether more files may be
+  contents of the selected files, read from the workspace when the attempt
+  starts (so a file an earlier task created is read as it was written). A
+  context file that still does not exist then (a dependency passed without
+  creating it) fails the task before any executor call. Repairs and
+  escalations also get the previous diff, failure evidence (first 8000
+  characters) and Meta's guidance. The reply rules (protected paths, whether more files may be
   requested) are generated from the enforced lists and limits.
   `context_version` hashes every task field, the contract, guidance, the
   previous attempt and the file contents (file order ignored); output that
@@ -143,6 +160,18 @@ malformed event, an end event with neither a cost nor a matching start, or an
 unreadable directory raises an error, and no paid call is made until it is
 resolved. `SpendTracker` also rejects NaN, infinite and negative amounts
 itself. A failed ledger append does not block later appends.
+
+Each run's `SpendTracker` compares against a snapshot of past spend, so two
+processes starting together could both pass against the same snapshot. The
+paid commands (`run` and `probe`) therefore take one lock,
+`runs/paid-run.lock`, created atomically (exclusive create) before the
+ledgers are read and removed when the command ends, also on errors. A second
+paid command is refused rather than queued. A lock left by a process that
+was killed (including Ctrl+C) is never removed automatically, since its run
+may have unfinished ledger entries and a reused process id cannot be told
+apart from a live owner; the error names the owner and says how to check
+spend and remove the lock by hand. Paid runs are therefore sequential; a
+shared budget for concurrent runs is not implemented.
 
 The CLI reads `MODEL_API_KEY` from `.env` without putting it into
 `process.env`, so no child process can inherit it.
@@ -216,6 +245,17 @@ our own timeout and an unreadable response body are not.
   process is not confirmed gone within a grace period, the result reports
   `processExited: false` instead of waiting forever, and the orchestrator
   must stop writing to that workspace.
+
+## Demo kit and holdout layout
+
+- `sample-repo/` is the baseline library a run starts from; `SPEC.md` holds
+  the complete rules that every test checks.
+- `eval/demo/` holds the request, the contract, `checks.json` and the
+  visible tests (`src/eval/kit.ts` loads and validates it).
+- Holdout tests are copied to `runs/<runId>/holdout/`, beside
+  `runs/<runId>/workspace/`, and import the frozen workspace as
+  `../workspace`. Keeping them outside the workspace means copying them
+  never changes the frozen content.
 
 ## Decisions
 

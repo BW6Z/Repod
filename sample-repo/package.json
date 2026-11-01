@@ -1,7 +1,7 @@
 {
   "name": "task-planner-sample",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Baseline sample library that Repod runs modify during demos and experiments.",
+  "description": "A small library for tasks that depend on each other.",
   "type": "module"
 }

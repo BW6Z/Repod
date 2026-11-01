@@ -13,6 +13,7 @@ const task = {
   acceptance: ["tsc passes", "visible planner tests pass"],
   context_files: ["src/index.ts"],
   write_files: ["src/index.ts"],
+  check_groups: [],
   depends_on: [],
   model: "claude-opus-5-5",
   reason: "Core ordering logic; errors affect every caller.",

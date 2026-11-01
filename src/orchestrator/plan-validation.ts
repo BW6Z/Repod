@@ -1,5 +1,6 @@
 import type { Limits, Preset, PricingTable } from "../config/schema.ts";
 import { PathRejectedError, isProtected, normalizeRelativePath } from "../workspace/paths.ts";
+import { checkGroupProblems, type CheckGroup } from "./check-groups.ts";
 import { applyCapabilityFloor, requiredTier } from "./routing.ts";
 import type { PlanResponse, PlannedTask } from "./schemas.ts";
 
@@ -17,6 +18,7 @@ export interface PlanContext {
   limits: Limits;
   pricing: PricingTable;
   remainingBudgetUsd: number;
+  checkGroups: CheckGroup[]; // configured visible test groups; empty when none
 }
 
 /**
@@ -59,6 +61,7 @@ function validateTasks(plan: PlanResponse, context: PlanContext): PlanIssue[] {
 
   const knownLower = new Set([...context.knownFiles].map((f) => f.toLowerCase()));
   const declaredModels = new Set(context.preset.models.map((m) => m.id));
+  const upstream = upstreamWrites(plan.tasks);
 
   for (const task of plan.tasks) {
     if (task.acceptance.length === 0) error(task.id, "task has no acceptance criteria");
@@ -69,11 +72,15 @@ function validateTasks(plan: PlanResponse, context: PlanContext): PlanIssue[] {
       else if (!ids.has(dep)) error(task.id, `depends on unknown task "${dep}"`);
     }
 
+    // A context file must exist now or be written by a task this one depends
+    // on. Declaring a write is not proof the file will exist: execution
+    // checks again before the executor is called.
     for (const file of task.context_files) {
       try {
         // Case-insensitive lookup, matching how Windows resolves the path.
-        if (!knownLower.has(normalizeRelativePath(file).toLowerCase())) {
-          error(task.id, `context file "${file}" does not exist in the workspace`);
+        const key = normalizeRelativePath(file).toLowerCase();
+        if (!knownLower.has(key) && !upstream.get(task.id)?.has(key)) {
+          error(task.id, `context file "${file}" does not exist in the workspace and no task it depends on writes it`);
         }
       } catch (e) {
         if (!(e instanceof PathRejectedError)) throw e;
@@ -100,6 +107,7 @@ function validateTasks(plan: PlanResponse, context: PlanContext): PlanIssue[] {
 
   const cycle = findCycle(plan.tasks);
   if (cycle) error(cycle[0] ?? null, `dependency cycle: ${cycle.join(" -> ")}`);
+  for (const problem of checkGroupProblems(plan.tasks, context.checkGroups)) error(problem.taskId, problem.message);
 
   const { totalUsd: worstCase, unpriced } = worstCaseCostUsd(plan.tasks, context);
   for (const model of unpriced) {
@@ -115,6 +123,36 @@ function validateTasks(plan: PlanResponse, context: PlanContext): PlanIssue[] {
     });
   }
   return issues;
+}
+
+/**
+ * For each task, the write_files (normalized, lower-case) of every task it
+ * depends on directly or transitively. Never its own, those of unrelated or
+ * later tasks, or those reached only through a cycle back to itself.
+ */
+function upstreamWrites(tasks: PlannedTask[]): Map<string, Set<string>> {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const result = new Map<string, Set<string>>();
+  for (const task of tasks) {
+    const files = new Set<string>();
+    const seen = new Set<string>([task.id]);
+    const pending = [...task.depends_on];
+    while (pending.length > 0) {
+      const dep = byId.get(pending.pop()!);
+      if (!dep || seen.has(dep.id)) continue; // unknown ids and cycles are reported separately
+      seen.add(dep.id);
+      for (const file of dep.write_files) {
+        try {
+          files.add(normalizeRelativePath(file).toLowerCase());
+        } catch (e) {
+          if (!(e instanceof PathRejectedError)) throw e; // reported on the task that lists it
+        }
+      }
+      pending.push(...dep.depends_on);
+    }
+    result.set(task.id, files);
+  }
+  return result;
 }
 
 /** Returns one dependency cycle as a list of task ids (first id repeated at the end), or null. */

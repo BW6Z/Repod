@@ -31,6 +31,7 @@ function task(overrides: Partial<PlannedTask>): PlannedTask {
     acceptance: ["tsc passes"],
     context_files: [],
     write_files: ["src/a.ts"],
+    check_groups: [],
     depends_on: [],
     model: "gemini",
     reason: "",

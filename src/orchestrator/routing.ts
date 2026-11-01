@@ -60,7 +60,8 @@ export function applyCapabilityFloor(task: PlannedTask, preset: Preset): FloorDe
 }
 
 /** Checks the program can run for a task, decided before the task executes. */
-export type CheckKind = "typecheck" | "visible-tests" | "doc-examples" | "doc-references";
+export const CHECK_KINDS = ["typecheck", "visible-tests", "doc-examples", "doc-references"] as const;
+export type CheckKind = (typeof CHECK_KINDS)[number];
 
 export interface ReviewRequirement {
   allowed: boolean; // false: the task must not run at all
@@ -80,9 +81,9 @@ const CODE_TASKS = new Set<PlannedTask["type"]>(["implement", "fix", "test"]);
  *     scheduled.
  *   - Complex or high-impact tasks are always reviewed.
  *
- * TODO: Docs checks (examples compile, referenced exports exist) are not
- * built yet, so the pipeline never lists them as available and every docs
- * task is reviewed. Add them with the sample repository's docs.
+ * Which checks exist is declared by trusted configuration (the demo kit's
+ * checks.json lists docs checks because its "docs" test group implements
+ * them); a docs task in a setup without them is always reviewed.
  */
 export function reviewRequirement(task: PlannedTask, available: ReadonlySet<CheckKind>): ReviewRequirement {
   const reasons: string[] = [];

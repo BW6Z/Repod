@@ -18,6 +18,7 @@ const task: PlannedTask = {
   acceptance: ["tsc passes", "visible tests pass"],
   context_files: ["src/index.ts"],
   write_files: ["src/index.ts"],
+  check_groups: [],
   depends_on: [],
   model: "muse-wonder-1.0",
   reason: "",

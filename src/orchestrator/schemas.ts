@@ -33,6 +33,9 @@ export const PlannedTask = z.strictObject({
   // able to read a test does not mean being allowed to change it. Output that
   // touches any other file is rejected as a whole.
   write_files: z.array(z.string()),
+  // Names of the configured check groups this task is responsible for; their
+  // visible tests are added to the workspace when the task runs.
+  check_groups: z.array(z.string()),
   depends_on: z.array(z.string()),
   model: z.string(),
   reason: z.string(), // shown to the user next to the model choice
