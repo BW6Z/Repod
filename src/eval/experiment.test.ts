@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -10,7 +10,17 @@ import { totalSpentUsd } from "../gateway/spend.ts";
 import type { ModelRequest, ModelResult } from "../gateway/types.ts";
 import type { ModelCaller } from "../orchestrator/orchestrator.ts";
 import type { ExecutorOutput, PlanResponse } from "../orchestrator/schemas.ts";
-import { renderSummary, runExperiment, singleModelTask, stat, type ExperimentOptions } from "./experiment.ts";
+import {
+  fingerprintDirs,
+  renderSummary,
+  runExperiment,
+  singleModelTask,
+  stat,
+  summarizeArms,
+  type ExperimentOptions,
+  type ExperimentResult,
+  type RunMetrics,
+} from "./experiment.ts";
 import type { DemoKit } from "./kit.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
@@ -55,12 +65,14 @@ before(async () => {
   holdoutDir = path.join(base, "holdout");
   await mkdir(holdoutDir);
   await writeFile(path.join(holdoutDir, "math.test.ts"), HOLDOUT);
+  await writeFile(path.join(holdoutDir, "expected-tests.json"), JSON.stringify({ expectedTests: 2 }));
   kit = {
     request: "Add mul and div.",
     contract: "Functions take and return numbers.",
     availableChecks: new Set(["typecheck", "visible-tests"]),
     checkGroups: [],
     visibleTestsDir: path.join(base, "no-visible-tests"),
+    baselineTests: null,
     singleModel: { title: "Complete the request", acceptance: ["visible tests pass"], writeFiles: ["src/math.ts"] },
   };
 });
@@ -77,7 +89,7 @@ function scripted(ledger: LedgerWriter, queues: Record<string, unknown[]>, refus
     async call<T>(request: ModelRequest<T>): Promise<ModelResult<T>> {
       const base = { role: request.role, model: request.model, taskId: request.taskId, attemptId: request.attemptId, reservedUsd: 0.5 };
       if (refuse) {
-        await ledger.append({ type: "call_refused", ...base, reason: "total budget $10 across runs would be exceeded" });
+        await ledger.append({ type: "call_refused", ...base, reason: "total budget $10 across runs would be exceeded", scope: "total" });
         return { ok: false, failure: "budget", detail: "refused", usage: null, costUsd: 0 };
       }
       await ledger.append({ type: "call_start", ...base });
@@ -149,8 +161,8 @@ describe("runExperiment", () => {
     const [a, c] = result.runs;
     assert.match(c?.problems.join("\n") ?? "", /holdout checks failed/);
     assert.equal(a?.model, "muse-wonder-1.0");
-    assert.deepEqual([a?.holdoutTestsPassed, a?.holdoutTestsRun, a?.holdoutPassRate], [2, 2, 1]);
-    assert.deepEqual([c?.holdoutTestsPassed, c?.holdoutTestsRun, c?.holdoutPassRate], [1, 2, 0.5]);
+    assert.deepEqual([a?.holdoutTestsPassed, a?.holdoutTestsExpected, a?.holdoutPassRate, a?.holdoutCheckPassed, a?.frozenIntact], [2, 2, 1, true, true]);
+    assert.deepEqual([c?.holdoutTestsPassed, c?.holdoutTestsExpected, c?.holdoutPassRate, c?.holdoutCheckPassed], [1, 2, 0.5, false]);
     assert.equal(a?.calls, 1, "arm A makes one executor call and no coordinator calls");
     assert.equal(c?.calls, 3, "plan, executor, summary");
     assert.equal(c?.costByPhase.coordination?.toFixed(2), "0.02");
@@ -175,6 +187,95 @@ describe("runExperiment", () => {
     assert.equal(result.runs[0]?.holdoutPassRate, 0);
     assert.match(result.stoppedEarly ?? "", /cumulative budget/);
   });
+
+  test("a run-budget refusal does not stop the experiment; only the cumulative budget does", async () => {
+    const refuseRun = (ledger: LedgerWriter): ModelCaller => ({
+      async call<T>(request: ModelRequest<T>): Promise<ModelResult<T>> {
+        await ledger.append({
+          type: "call_refused", role: request.role, model: request.model, taskId: request.taskId, attemptId: request.attemptId,
+          reservedUsd: 0.5, reason: "run budget $3 would be exceeded", scope: "run",
+        });
+        return { ok: false, failure: "budget", detail: "refused", usage: null, costUsd: 0 };
+      },
+    });
+    const result = await runExperiment(options({ arms: ["C"], runsPerArm: 2, gatewayFor: (_preset, ledger) => refuseRun(ledger) }));
+    assert.equal(result.runs.length, 2);
+    assert.equal(result.stoppedEarly, null);
+  });
+
+  test("an experiment without the holdout's expected test count is refused before anything runs", async () => {
+    const bare = path.join(base, "holdout without count");
+    await mkdir(bare);
+    await writeFile(path.join(bare, "math.test.ts"), HOLDOUT);
+    const o = options({ holdoutDir: bare });
+    await assert.rejects(runExperiment(o), /expected-tests\.json is missing/);
+    await assert.rejects(readdir(o.runsDir), "no run folder was created");
+  });
+
+  test("a failure outside a run's pipeline stops the experiment but keeps and saves the results so far", async () => {
+    const saved: ExperimentResult[] = [];
+    let calls = 0;
+    const o = options({
+      arms: ["A"],
+      runsPerArm: 3,
+      gatewayFor: (_preset, ledger) => {
+        if (++calls === 2) throw new Error("adapter could not be created");
+        return scripted(ledger, { executor_output: [writes(MATH + MUL + DIV)] });
+      },
+      save: async (partial) => {
+        saved.push(structuredClone(partial));
+      },
+    });
+    const result = await runExperiment(o);
+    assert.equal(result.runs.length, 1);
+    assert.match(result.stoppedEarly ?? "", /a2 could not be completed: adapter could not be created/);
+    assert.equal(saved.at(-1)?.runs.length, 1, "the last save has the finished run");
+    assert.ok(saved.length >= 2, "saved after the first run already");
+  });
+
+  test("inputs that change mid-experiment stop it before the next run", async () => {
+    let version = 0;
+    const o = options({
+      arms: ["A"],
+      runsPerArm: 3,
+      gatewayFor: (_preset, ledger) => {
+        version++; // as if someone edited the sample repository during run 1
+        return scripted(ledger, { executor_output: [writes(MATH + MUL + DIV)] });
+      },
+      fingerprint: async () => ({ baseline: `v${Math.min(version, 1)}`, config: "same" }),
+    });
+    const result = await runExperiment(o);
+    assert.equal(result.runs.length, 1);
+    assert.deepEqual(result.inputs, { baseline: "v0", config: "same" });
+    assert.match(result.stoppedEarly ?? "", /inputs changed before run .*-a2 \(baseline\)/);
+  });
+});
+
+test("a holdout counts as fully passed only if the check passed, every expected test passed and the freeze held", () => {
+  const run = (overrides: Partial<RunMetrics>): RunMetrics => ({
+    arm: "A", round: 1, runId: "r", preset: "saving", model: null, status: "completed",
+    holdoutRan: true, holdoutCheckPassed: true, holdoutFailure: null, holdoutTestsExpected: 4, holdoutTestsRun: 4,
+    holdoutTestsPassed: 4, frozenIntact: true, holdoutPassRate: 1, costUsd: 0, wallMs: 1, calls: 1, escalations: 0,
+    costByPhase: { coordination: 0, execution: 0, rework: 0, review: 0 }, problems: [],
+    ...overrides,
+  });
+  const [summary] = summarizeArms([
+    run({}),
+    run({ holdoutCheckPassed: false, holdoutFailure: "exit_code" }), // counts equal, but the process failed
+    run({ frozenIntact: false }), // the workspace changed while the holdout ran
+    run({ holdoutTestsRun: 3, holdoutTestsPassed: 3, holdoutPassRate: 0.75, holdoutCheckPassed: false, holdoutFailure: "missing_tests" }),
+  ], ["A"]);
+  assert.equal(summary?.holdoutAllPassed, 1);
+});
+
+test("fingerprints change when any file under a directory changes", async () => {
+  const dir = path.join(base, "fingerprint");
+  await mkdir(path.join(dir, "sub"), { recursive: true });
+  await writeFile(path.join(dir, "sub", "a.txt"), "one");
+  const first = await fingerprintDirs({ d: dir });
+  assert.deepEqual(await fingerprintDirs({ d: dir }), first);
+  await writeFile(path.join(dir, "sub", "a.txt"), "two");
+  assert.notDeepEqual(await fingerprintDirs({ d: dir }), first);
 });
 
 test("arm A's task uses the critical model, every baseline file and every check group", () => {

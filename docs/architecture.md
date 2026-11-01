@@ -74,7 +74,7 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
 6. **Freeze**: only when every task passed. The dev checks run again on the
    integrated result, every file is hashed, holdout checks run once without
    feedback to any model, and the hashes are compared again so results are
-   bound to the frozen content.
+   bound to the frozen content (`frozenIntact` in the report).
 7. **Summarize**: Meta writes the closing message; the program owns every
    status and figure in the report. Skipped when the budget ran out.
 
@@ -280,8 +280,15 @@ our own timeout and an unreadable response body are not.
   (neither is writable by executors).
 - **Checks**: `node <tsc> -p tsconfig.json` and
   `node --test --test-reporter=tap test/**/*.test.ts`, started without a
-  shell. Failures are classified as `timeout`, `spawn_error`, `exit_code` or
-  `no_tests`, so environment problems are never mistaken for code problems.
+  shell. Failures are classified as `timeout`, `spawn_error`, `exit_code`,
+  `no_tests` or `missing_tests`, so environment problems are never mistaken
+  for code problems. `missing_tests` means fewer tests ran than trusted
+  configuration says the suite has (a test file that crashed at load time,
+  or code that exits the process early); it is a code problem and can be
+  repaired. Visible test runs are held to the baseline's count plus the
+  counts of the check groups whose tests are in the workspace
+  (`eval/demo/checks.json`); the holdout run to the count in its private
+  `expected-tests.json`.
   The test count comes from the last summary line in the last 8 KB of
   output, so code under test that prints "tests N" and truncated output do
   not distort it. On timeout the whole process tree is killed; if the

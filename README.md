@@ -75,7 +75,7 @@ npm run repod -- probe           # one tiny live request; costs real money
 npm run repod -- probe --model muse-wonder-1.0
 npm run repod -- run             # the demo request, interactive; costs real money
 npm run repod -- run --experiment --holdout <dir>
-npm run repod -- experiment --holdout <dir>                    # arms A and C, 1 run each ("debug")
+npm run repod -- experiment --holdout <dir>                    # arms A and C, 1 run each ("debug"); <dir> needs expected-tests.json
 npm run repod -- experiment --holdout <dir> --runs 3 --label formal
 ```
 

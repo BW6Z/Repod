@@ -8,7 +8,7 @@ import { validatePlan } from "../orchestrator/plan-validation.ts";
 import { applyCapabilityFloor } from "../orchestrator/routing.ts";
 import { listFiles } from "../workspace/workspace.ts";
 import { singleModelTask } from "./experiment.ts";
-import { loadDemoKit, prepareHoldout } from "./kit.ts";
+import { loadDemoKit, prepareHoldout, readHoldoutExpected } from "./kit.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -18,6 +18,33 @@ test("the shipped demo kit is complete and consistent", async () => {
   assert.match(kit.contract, /SPEC\.md/);
   assert.deepEqual(kit.checkGroups.map((g) => g.name), ["planner", "cli", "docs"]);
   assert.ok(kit.availableChecks.has("doc-examples") && kit.availableChecks.has("doc-references"));
+  // Counted on the reference implementation; every one must be declared, or
+  // no visible test run is held to a count.
+  assert.equal(kit.baselineTests, 9);
+  assert.deepEqual(kit.checkGroups.map((g) => g.expectedTests), [7, 4, 4]);
+});
+
+test("the holdout folder's expected test count is read, validated, and attached to the holdout check", async () => {
+  const base = await mkdtemp(path.join(tmpdir(), "repod-holdout-count-"));
+  try {
+    const source = path.join(base, "source");
+    await mkdir(source);
+    await writeFile(path.join(source, "a.test.ts"), "");
+    assert.equal(await readHoldoutExpected(source), null);
+    const [without] = await prepareHoldout(path.join(base, "run1"), source, 1000, 1000);
+    assert.equal(without?.expectedTests, undefined);
+
+    await writeFile(path.join(source, "expected-tests.json"), JSON.stringify({ expectedTests: 31 }));
+    assert.equal(await readHoldoutExpected(source), 31);
+    const [withCount] = await prepareHoldout(path.join(base, "run2"), source, 1000, 1000);
+    assert.equal(withCount?.expectedTests, 31);
+    assert.deepEqual(await readdir(path.join(base, "run2", "holdout")), ["a.test.ts"], "the count file is not copied next to the workspace");
+
+    await writeFile(path.join(source, "expected-tests.json"), JSON.stringify({ expectedTests: 0 }));
+    await assert.rejects(readHoldoutExpected(source), /Invalid/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });
 
 test("arm A's shipped task is a valid plan for the sample repository", async () => {

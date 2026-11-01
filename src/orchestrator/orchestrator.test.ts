@@ -8,7 +8,7 @@ import type { RepodConfig } from "../config/schema.ts";
 import { LedgerWriteError } from "../gateway/gateway.ts";
 import { LedgerWriter, readEvents } from "../gateway/ledger.ts";
 import type { FailureKind, ModelRequest, ModelResult } from "../gateway/types.ts";
-import { standardChecks, type CheckResult } from "../verifier/verifier.ts";
+import { standardChecks, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
 import { createRunWorkspace, type RunWorkspace } from "../workspace/workspace.ts";
 import { experimentHooks, runPipeline, type ModelCaller, type PipelineHooks, type PipelineOptions } from "./orchestrator.ts";
 import type { CheckKind } from "./routing.ts";
@@ -489,6 +489,27 @@ describe("runPipeline: check groups", () => {
     assert.match(second!, /=== FILE: test\/sub\.test\.ts ===/);
     assert.deepEqual(report.pendingCheckGroups, []);
     await readFile(path.join(workspace.root, "test", "sub.test.ts")); // both groups are in the final result
+  });
+
+  test("each visible test run must execute the baseline's tests plus those of the groups present", async () => {
+    const counted = groups.map((g) => ({ ...g, expectedTests: g.name === "mul" ? 2 : 5 }));
+    const seen: Array<{ name: string; expected: number | undefined }> = [];
+    const pass = async (spec: CheckSpec): Promise<CheckResult> => {
+      seen.push({ name: spec.name, expected: spec.expectedTests });
+      return { name: spec.name, passed: true, failure: null, exitCode: 0, timedOut: false, processExited: true, testsRun: 99, testsPassed: 99, output: "", outputTruncated: false, durationMs: 1 };
+    };
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1", { check_groups: ["mul"] }), task("T2", { check_groups: ["sub"], depends_on: ["T1"] }))],
+      executor_output: [writes({ "src/math.ts": WITH_MUL }), writes({ "src/math.ts": WITH_MUL_SUB })],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway, { checkGroups: counted, visibleTestsDir, baselineTests: 1, runCheck: pass });
+
+    assert.equal(report.status, "completed", report.problems.join("\n"));
+    // T1 (baseline + mul), T2 (baseline + mul + sub), then the integrated check.
+    assert.deepEqual(seen.filter((c) => c.name === "visible-tests").map((c) => c.expected), [3, 8, 8]);
+    assert.ok(seen.filter((c) => c.name === "typecheck").every((c) => c.expected === undefined));
+    assert.equal(report.frozenIntact, true);
   });
 
   test("a repair sees only its own write scope in the diff, not the copied visible tests", async () => {

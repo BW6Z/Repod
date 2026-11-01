@@ -63,7 +63,9 @@ export interface Reservation {
   closed: boolean;
 }
 
-export type ReserveResult = { ok: true; reservation: Reservation } | { ok: false; reason: string };
+// "run": this run's budget is used up; "total": the budget across all runs is.
+export type BudgetScope = "run" | "total";
+export type ReserveResult = { ok: true; reservation: Reservation } | { ok: false; reason: string; scope: BudgetScope };
 
 function requireAmount(name: string, value: number, allowZero = true): void {
   // NaN fails every comparison, so an unchecked NaN would pass every budget check.
@@ -105,10 +107,10 @@ export class SpendTracker {
     requireAmount("reservation", amountUsd);
     const committed = this.runSpentUsd + this.heldUsd + amountUsd;
     if (committed > this.runBudgetUsd) {
-      return { ok: false, reason: `run budget $${this.runBudgetUsd} would be exceeded` };
+      return { ok: false, reason: `run budget $${this.runBudgetUsd} would be exceeded`, scope: "run" };
     }
     if (this.spentBeforeRunUsd + committed > this.totalBudgetUsd) {
-      return { ok: false, reason: `total budget $${this.totalBudgetUsd} across runs would be exceeded` };
+      return { ok: false, reason: `total budget $${this.totalBudgetUsd} across runs would be exceeded`, scope: "total" };
     }
     this.heldUsd += amountUsd;
     return { ok: true, reservation: { amountUsd, closed: false } };

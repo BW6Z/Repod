@@ -5,7 +5,7 @@ import type { Preset, RepodConfig, Tier } from "../config/schema.ts";
 import { LedgerWriteError } from "../gateway/gateway.ts";
 import type { LedgerWriter } from "../gateway/ledger.ts";
 import type { FailureKind, ModelRequest, ModelResult, Role } from "../gateway/types.ts";
-import { runCheck as defaultRunCheck, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
+import { VISIBLE_TESTS, runCheck as defaultRunCheck, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
 import { PathRejectedError, isProtected, normalizeRelativePath, resolveAllowedPath } from "../workspace/paths.ts";
 import { renderRepoSummary, summarizeRepo } from "../workspace/summary.ts";
 import {
@@ -73,6 +73,9 @@ export interface PipelineOptions {
   devChecks: CheckSpec[]; // run after every attempt and once more on the final result
   holdoutChecks: CheckSpec[]; // run once after freezing; never shown to a model
   checkGroups: CheckGroup[]; // visible test groups, added to test/ as their tasks run
+  // Tests in the baseline's own test files. With it and every group's
+  // expectedTests, each visible test run must execute at least that many.
+  baselineTests?: number;
   visibleTestsDir: string | null; // folder holding the groups' test files
   availableChecks: ReadonlySet<CheckKind>;
   remainingBudgetUsd: number; // for the plan's budget warning
@@ -144,6 +147,8 @@ class Run {
   // an exception later in the run cannot lose results already obtained.
   private readonly outcomes = new Map<string, TaskOutcome>();
   private runningTask: string | null = null;
+  // Check groups whose test files are in the workspace right now.
+  private readonly presentGroups = new Set<string>();
   // null once any call in the phase had an unknown cost.
   private readonly phaseCost: Record<CostPhase, number | null> = { coordination: 0, execution: 0, rework: 0, review: 0 };
 
@@ -164,6 +169,7 @@ class Run {
       finalChecks: [],
       holdout: [],
       manifest: null,
+      frozenIntact: null,
       problems: this.problems,
       summary: null,
       costUsd: null,
@@ -476,6 +482,7 @@ class Run {
     for (const file of tests) {
       await copyFile(path.join(this.o.visibleTestsDir!, path.basename(file)), target(file));
     }
+    for (const name of task.check_groups) this.presentGroups.add(name);
 
     const outcome = await this.executeTask(task);
 
@@ -485,6 +492,7 @@ class Run {
         else await writeFile(file, content);
       }
       for (const file of tests) await rm(target(file), { force: true });
+      for (const name of task.check_groups) this.presentGroups.delete(name);
     }
     return outcome;
   }
@@ -667,10 +675,28 @@ class Run {
     }
   }
 
+  /**
+   * How many tests the visible test run must execute now: the baseline's
+   * plus those of the groups whose files are in the workspace. null when
+   * the configuration does not declare every count.
+   */
+  private expectedVisibleTests(): number | null {
+    if (this.o.baselineTests === undefined) return null;
+    let total = this.o.baselineTests;
+    for (const name of this.presentGroups) {
+      const count = this.o.checkGroups.find((g) => g.name === name)?.expectedTests;
+      if (count === undefined) return null;
+      total += count;
+    }
+    return total;
+  }
+
   /** Runs checks in order; every result is logged. */
   private async check(taskId: string | null, specs: CheckSpec[], results: CheckResult[] = []): Promise<AttemptResult> {
     const failures: string[] = [];
-    for (const spec of specs) {
+    const expected = this.expectedVisibleTests();
+    for (const configured of specs) {
+      const spec = configured.name === VISIBLE_TESTS && expected !== null ? { ...configured, expectedTests: expected } : configured;
       const result = await this.runCheck(spec);
       results.push(result);
       await this.o.ledger.append({ type: "check_result", taskId, check: result.name, passed: result.passed, testsRun: result.testsRun });
@@ -681,7 +707,8 @@ class Run {
       if (result.failure && ENVIRONMENT_FAILURES.has(result.failure)) {
         return { kind: "stop-run", reason: `environment problem in ${result.name}: ${result.failure}` };
       }
-      if (!result.passed) failures.push(`## ${result.name} (${result.failure})\n${result.output.slice(0, MAX_EVIDENCE_CHARS)}`);
+      const missing = result.failure === "missing_tests" ? `only ${result.testsRun ?? 0} of ${spec.expectedTests} tests ran; a test file crashed or the process exited early\n` : "";
+      if (!result.passed) failures.push(`## ${result.name} (${result.failure})\n${missing}${result.output.slice(0, MAX_EVIDENCE_CHARS)}`);
     }
     return failures.length === 0
       ? { kind: "passed" }
@@ -745,7 +772,8 @@ class Run {
 
     // Results are bound to the frozen content; any change since invalidates them.
     const after = await snapshotManifest(this.o.workspace);
-    if (JSON.stringify(after) !== JSON.stringify(report.manifest)) {
+    report.frozenIntact = JSON.stringify(after) === JSON.stringify(report.manifest);
+    if (!report.frozenIntact) {
       this.problems.push("the workspace changed while holdout checks ran; results are not valid for the frozen version");
     }
   }

@@ -194,7 +194,7 @@ export class ModelGateway {
 
     const reserved = spend.tryReserve(reservedUsd);
     if (!reserved.ok) {
-      await this.record({ type: "call_refused", ...base, reason: reserved.reason });
+      await this.record({ type: "call_refused", ...base, reason: reserved.reason, scope: reserved.scope });
       return { ok: false, failure: "budget", detail: reserved.reason, retryable: false, retryAfterMs: null };
     }
 

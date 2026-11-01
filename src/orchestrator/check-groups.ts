@@ -16,6 +16,10 @@ export const CheckGroup = z.strictObject({
   // Plain file names inside the visible tests folder; copied to test/<name>.
   tests: z.array(z.string().regex(/^[A-Za-z0-9._-]+\.test\.ts$/)).min(1),
   requires: z.array(z.string()), // groups whose work must be done first
+  // How many tests the group's files contain, counted on a reference
+  // implementation. Optional; when every group and the baseline declare it,
+  // a visible test run with fewer executed tests fails (see CheckSpec).
+  expectedTests: z.number().int().positive().optional(),
 });
 export type CheckGroup = z.infer<typeof CheckGroup>;
 

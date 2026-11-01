@@ -49,6 +49,10 @@ export interface RunReport {
   finalChecks: CheckResult[]; // dev checks re-run on the integrated result
   holdout: CheckResult[];
   manifest: Record<string, string> | null; // content hashes at freeze time
+  // Whether the workspace still matched the manifest after the holdout
+  // checks ran; null when the run was not frozen. Holdout results only
+  // count for the frozen content when this is true.
+  frozenIntact: boolean | null;
   problems: string[]; // every reason the run is not completed
   summary: RunSummary | null;
   costUsd: number | null; // list-price cost of all calls; null if any cost is unknown

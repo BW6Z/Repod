@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Preset, RepodConfig } from "../config/schema.ts";
 import { readEvents, LedgerWriter } from "../gateway/ledger.ts";
@@ -7,7 +8,7 @@ import type { PlannedTask } from "../orchestrator/schemas.ts";
 import type { CostPhase, RunReport } from "../orchestrator/state.ts";
 import { standardChecks, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
 import { createRunWorkspace, listFiles } from "../workspace/workspace.ts";
-import { prepareHoldout, type DemoKit } from "./kit.ts";
+import { prepareHoldout, readHoldoutExpected, type DemoKit } from "./kit.ts";
 
 /**
  * The comparison arms of eval/README.md. All arms share the baseline, the
@@ -44,6 +45,16 @@ export interface ExperimentOptions {
   gatewayFor(preset: Preset, ledger: LedgerWriter, spentBeforeUsd: number): ModelCaller;
   runCheck?: (spec: CheckSpec) => Promise<CheckResult>; // injectable for tests
   log?: (line: string) => void;
+  /**
+   * Content hashes of everything a run depends on (code, configuration,
+   * demo kit, baseline, holdout tests). Taken at the start and before every
+   * later run; any change stops the experiment, so results from different
+   * inputs are never mixed.
+   */
+  fingerprint?: () => Promise<Record<string, string>>;
+  sourceCommit?: string | null; // for the record; the fingerprint is what is checked
+  /** Called with the results so far after every run, so a failure later loses nothing. */
+  save?: (result: ExperimentResult) => Promise<void>;
 }
 
 export interface RunMetrics {
@@ -55,10 +66,18 @@ export interface RunMetrics {
   status: RunReport["status"];
   // Holdout tests run only on a frozen result, so an incomplete run has none.
   holdoutRan: boolean;
+  holdoutCheckPassed: boolean | null; // the check itself: exit code, timeout, test count
+  holdoutFailure: string | null;
+  holdoutTestsExpected: number; // from the private holdout configuration
   holdoutTestsRun: number | null;
   holdoutTestsPassed: number | null;
-  // Passed / run. 0 when the holdout did not run or its counts are unknown:
-  // a run that delivered nothing checkable delivered nothing.
+  // Whether the frozen content was unchanged after the holdout ran; null
+  // when the run was not frozen.
+  frozenIntact: boolean | null;
+  // Passed / expected. 0 when the holdout did not run or its counts are
+  // unknown: a run that delivered nothing checkable delivered nothing. This
+  // is the share of passing tests; whether the run as a whole counts as
+  // fully passing is holdoutAllPassed in the arm summary.
   holdoutPassRate: number;
   costUsd: number | null;
   costByPhase: Record<CostPhase, number | null>;
@@ -78,7 +97,7 @@ export interface ArmSummary {
   arm: Arm;
   runs: number;
   completed: number;
-  holdoutAllPassed: number; // runs whose holdout ran and passed in full
+  holdoutAllPassed: number; // runs whose holdout check passed with every expected test, on intact frozen content
   holdoutPassRate: Stat | null;
   costUsd: Stat | null; // over runs with a known cost
   costUnknownRuns: number;
@@ -91,6 +110,8 @@ export interface ExperimentResult {
   startedAt: string;
   finishedAt: string;
   baselineCommit: string | null;
+  sourceCommit: string | null;
+  inputs: Record<string, string> | null; // the input fingerprint every run was checked against
   request: string;
   // Every run uses default answers and approves the plan automatically, so
   // there is no human input to count.
@@ -130,6 +151,29 @@ export function stat(values: number[]): Stat | null {
   return { median, min: sorted[0]!, max: sorted[sorted.length - 1]! };
 }
 
+/**
+ * A run counts as fully passing the holdout only if the check itself
+ * succeeded, every expected test ran and passed, and the content it ran on
+ * was still the frozen content. Equal counts alone are not enough: a check
+ * can fail (exit code, timeout) after its counts were printed.
+ */
+function fullyPassed(r: RunMetrics): boolean {
+  return r.holdoutRan && r.holdoutCheckPassed === true && r.frozenIntact === true && r.holdoutTestsPassed === r.holdoutTestsExpected;
+}
+
+/** Content hash of every file under each directory (paths and bytes), keyed by name. */
+export async function fingerprintDirs(dirs: Record<string, string>): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const [name, dir] of Object.entries(dirs)) {
+    const hash = createHash("sha256");
+    for (const file of await listFiles(dir)) {
+      hash.update(file).update("\0").update(await readFile(path.join(dir, ...file.split("/")))).update("\0");
+    }
+    result[name] = hash.digest("hex");
+  }
+  return result;
+}
+
 export function summarizeArms(runs: RunMetrics[], arms: Arm[]): ArmSummary[] {
   return arms.map((arm) => {
     const own = runs.filter((r) => r.arm === arm);
@@ -138,7 +182,7 @@ export function summarizeArms(runs: RunMetrics[], arms: Arm[]): ArmSummary[] {
       arm,
       runs: own.length,
       completed: own.filter((r) => r.status === "completed").length,
-      holdoutAllPassed: own.filter((r) => r.holdoutRan && r.holdoutPassRate === 1).length,
+      holdoutAllPassed: own.filter((r) => fullyPassed(r)).length,
       holdoutPassRate: stat(own.map((r) => r.holdoutPassRate)),
       costUsd: stat(known),
       costUnknownRuns: own.length - known.length,
@@ -153,103 +197,155 @@ export function summarizeArms(runs: RunMetrics[], arms: Arm[]): ArmSummary[] {
  * fresh workspace, its own ledger and report under runs/<runId>/, and a
  * spend tracker built from the spend recorded so far.
  *
- * The caller must hold the paid-run lock for the whole experiment. Once a
- * run is refused by the cumulative budget, later runs would be refused too,
- * so the experiment stops and says so.
+ * The caller must hold the paid-run lock for the whole experiment. The
+ * experiment stops early, keeping the results so far, when the cumulative
+ * budget refuses a call (later runs would be refused too), when its inputs
+ * change, or when anything fails outside a run's own pipeline (a ledger
+ * that cannot be read, a workspace that cannot be created). Results are
+ * passed to `save` after every run.
  */
 export async function runExperiment(o: ExperimentOptions): Promise<ExperimentResult> {
   const log = o.log ?? (() => {});
+  // The holdout pass rate is the main result; without the expected count a
+  // crashed test file would shrink the denominator. Checked before anything
+  // is created or paid for.
+  const holdoutExpected = await readHoldoutExpected(o.holdoutDir);
+  if (holdoutExpected === null) {
+    throw new Error(`${path.join(o.holdoutDir, "expected-tests.json")} is missing: experiments need the holdout suite's test count`);
+  }
+  for (const arm of o.arms) {
+    if (!o.config.presets.has(ARM_SETUP[arm].preset)) throw new Error(`Arm ${arm} needs preset "${ARM_SETUP[arm].preset}", which is not configured`);
+  }
+
+  const inputs = o.fingerprint ? await o.fingerprint() : null;
   const startedAt = new Date().toISOString();
   const runs: RunMetrics[] = [];
   let baselineCommit: string | null = null;
   let stoppedEarly: string | null = null;
-
-  rounds: for (let round = 1; round <= o.runsPerArm; round++) {
-    for (const arm of o.arms) {
-      const setup = ARM_SETUP[arm];
-      const preset = o.config.presets.get(setup.preset);
-      if (!preset) throw new Error(`Arm ${arm} needs preset "${setup.preset}", which is not configured`);
-      const { limits } = o.config;
-      const spentBefore = await o.spentUsd();
-
-      const runId = `${o.experimentId}-${arm.toLowerCase()}${round}`;
-      log(`Run ${runId} (arm ${arm}, ${setup.singleModel ? `single model ${preset.roles.critical}` : `preset ${preset.name}`})...`);
-      const workspace = await createRunWorkspace(o.baselineDir, o.runsDir, runId);
-      baselineCommit ??= workspace.baselineCommit;
-      const ledger = new LedgerWriter(workspace.ledgerFile, runId);
-      const holdoutChecks = await prepareHoldout(workspace.runDir, o.holdoutDir, limits.checkTimeoutMs, limits.maxCheckOutputBytes);
-      const task = setup.singleModel ? singleModelTask(o.kit, preset, await listFiles(workspace.root)) : undefined;
-
-      const started = Date.now();
-      const report = await runPipeline({
-        request: o.kit.request,
-        config: o.config,
-        preset,
-        gateway: o.gatewayFor(preset, ledger, spentBefore),
-        ledger,
-        workspace,
-        contract: o.kit.contract,
-        devChecks: standardChecks({
-          workspaceRoot: workspace.root,
-          tscEntry: o.tscEntry,
-          timeoutMs: limits.checkTimeoutMs,
-          maxOutputBytes: limits.maxCheckOutputBytes,
-        }),
-        holdoutChecks,
-        checkGroups: o.kit.checkGroups,
-        visibleTestsDir: o.kit.visibleTestsDir,
-        availableChecks: o.kit.availableChecks,
-        remainingBudgetUsd: Math.min(limits.budgetUsd, limits.totalBudgetUsd - spentBefore),
-        hooks: experimentHooks,
-        ...(o.runCheck ? { runCheck: o.runCheck } : {}),
-        ...(task ? { singleModelTask: task } : {}),
-      });
-      const wallMs = Date.now() - started;
-      await writeFile(path.join(workspace.runDir, "report.json"), JSON.stringify(report, null, 2));
-
-      const events = await readEvents(workspace.ledgerFile);
-      const holdout = report.holdout.find((c) => c.name === "holdout-tests") ?? null;
-      const metrics: RunMetrics = {
-        arm,
-        round,
-        runId,
-        preset: preset.name,
-        model: task?.model ?? null,
-        status: report.status,
-        holdoutRan: holdout !== null,
-        holdoutTestsRun: holdout?.testsRun ?? null,
-        holdoutTestsPassed: holdout?.testsPassed ?? null,
-        holdoutPassRate: holdout?.testsRun && holdout.testsPassed !== null ? holdout.testsPassed / holdout.testsRun : 0,
-        costUsd: report.costUsd,
-        costByPhase: report.costByPhase,
-        calls: events.filter((e) => e.type === "call_start").length,
-        escalations: report.tasks.filter((t) => t.escalated).length,
-        wallMs,
-        problems: report.problems,
-      };
-      runs.push(metrics);
-      log(`  ${report.status}; holdout ${metrics.holdoutRan ? `${metrics.holdoutTestsPassed}/${metrics.holdoutTestsRun}` : "not run"}; cost ${formatUsd(metrics.costUsd)}`);
-
-      const refused = events.find((e) => e.type === "call_refused" && /total budget/.test(e.reason));
-      if (refused) {
-        stoppedEarly = `run ${runId} reached the cumulative budget; the remaining runs were not started`;
-        break rounds;
-      }
-    }
-  }
-
-  return {
+  const result = (): ExperimentResult => ({
     experimentId: o.experimentId,
     label: o.label,
     startedAt,
     finishedAt: new Date().toISOString(),
     baselineCommit,
+    sourceCommit: o.sourceCommit ?? null,
+    inputs,
     request: o.kit.request,
     humanInput: "none",
     stoppedEarly,
     runs,
     arms: summarizeArms(runs, o.arms),
+  });
+
+  rounds: for (let round = 1; round <= o.runsPerArm; round++) {
+    for (const arm of o.arms) {
+      const runId = `${o.experimentId}-${arm.toLowerCase()}${round}`;
+      try {
+        if (inputs && o.fingerprint && runs.length > 0) {
+          const now = await o.fingerprint();
+          const changed = Object.keys(inputs).filter((key) => inputs[key] !== now[key]);
+          if (changed.length > 0) {
+            stoppedEarly = `inputs changed before run ${runId} (${changed.join(", ")}); the remaining runs were not started`;
+            break rounds;
+          }
+        }
+        const metrics = await runOne(o, arm, round, runId, holdoutExpected, log);
+        baselineCommit ??= metrics.baselineCommit;
+        runs.push(metrics.run);
+        if (metrics.totalBudgetRefused) {
+          stoppedEarly = `run ${runId} reached the cumulative budget; the remaining runs were not started`;
+          break rounds;
+        }
+      } catch (error) {
+        // Not a failed run (the pipeline reports those itself) but a broken
+        // environment: stop rather than keep paying, and keep what we have.
+        stoppedEarly = `run ${runId} could not be completed: ${(error as Error).message}`;
+        break rounds;
+      } finally {
+        await o.save?.(result());
+      }
+    }
+  }
+  const final = result();
+  await o.save?.(final);
+  return final;
+}
+
+async function runOne(
+  o: ExperimentOptions,
+  arm: Arm,
+  round: number,
+  runId: string,
+  holdoutExpected: number,
+  log: (line: string) => void,
+): Promise<{ run: RunMetrics; baselineCommit: string; totalBudgetRefused: boolean }> {
+  const setup = ARM_SETUP[arm];
+  const preset = o.config.presets.get(setup.preset)!;
+  const { limits } = o.config;
+  const spentBefore = await o.spentUsd();
+
+  log(`Run ${runId} (arm ${arm}, ${setup.singleModel ? `single model ${preset.roles.critical}` : `preset ${preset.name}`})...`);
+  const workspace = await createRunWorkspace(o.baselineDir, o.runsDir, runId);
+  const ledger = new LedgerWriter(workspace.ledgerFile, runId);
+  const holdoutChecks = await prepareHoldout(workspace.runDir, o.holdoutDir, limits.checkTimeoutMs, limits.maxCheckOutputBytes);
+  const task = setup.singleModel ? singleModelTask(o.kit, preset, await listFiles(workspace.root)) : undefined;
+
+  const started = Date.now();
+  const report = await runPipeline({
+    request: o.kit.request,
+    config: o.config,
+    preset,
+    gateway: o.gatewayFor(preset, ledger, spentBefore),
+    ledger,
+    workspace,
+    contract: o.kit.contract,
+    devChecks: standardChecks({
+      workspaceRoot: workspace.root,
+      tscEntry: o.tscEntry,
+      timeoutMs: limits.checkTimeoutMs,
+      maxOutputBytes: limits.maxCheckOutputBytes,
+    }),
+    holdoutChecks,
+    checkGroups: o.kit.checkGroups,
+    ...(o.kit.baselineTests === null ? {} : { baselineTests: o.kit.baselineTests }),
+    visibleTestsDir: o.kit.visibleTestsDir,
+    availableChecks: o.kit.availableChecks,
+    remainingBudgetUsd: Math.min(limits.budgetUsd, limits.totalBudgetUsd - spentBefore),
+    hooks: experimentHooks,
+    ...(o.runCheck ? { runCheck: o.runCheck } : {}),
+    ...(task ? { singleModelTask: task } : {}),
+  });
+  const wallMs = Date.now() - started;
+  await writeFile(path.join(workspace.runDir, "report.json"), JSON.stringify(report, null, 2));
+
+  const events = await readEvents(workspace.ledgerFile);
+  const holdout = report.holdout.find((c) => c.name === "holdout-tests") ?? null;
+  const passed = holdout?.testsPassed ?? null;
+  const run: RunMetrics = {
+    arm,
+    round,
+    runId,
+    preset: preset.name,
+    model: task?.model ?? null,
+    status: report.status,
+    holdoutRan: holdout !== null,
+    holdoutCheckPassed: holdout?.passed ?? null,
+    holdoutFailure: holdout?.failure ?? null,
+    holdoutTestsExpected: holdoutExpected,
+    holdoutTestsRun: holdout?.testsRun ?? null,
+    holdoutTestsPassed: passed,
+    frozenIntact: report.frozenIntact,
+    holdoutPassRate: passed === null ? 0 : Math.min(1, passed / holdoutExpected),
+    costUsd: report.costUsd,
+    costByPhase: report.costByPhase,
+    calls: events.filter((e) => e.type === "call_start").length,
+    escalations: report.tasks.filter((t) => t.escalated).length,
+    wallMs,
+    problems: report.problems,
   };
+  log(`  ${report.status}; holdout ${run.holdoutRan ? `${passed ?? "?"}/${holdoutExpected}` : "not run"}; cost ${formatUsd(run.costUsd)}`);
+  const totalBudgetRefused = events.some((e) => e.type === "call_refused" && e.scope === "total");
+  return { run, baselineCommit: workspace.baselineCommit, totalBudgetRefused };
 }
 
 function formatUsd(value: number | null): string {

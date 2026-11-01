@@ -15,13 +15,21 @@ export interface CheckSpec {
   timeoutMs: number;
   maxOutputBytes: number;
   expectTests: boolean; // when true, zero executed tests counts as a failure
+  // From trusted configuration, never from model output: when set, fewer
+  // executed tests than this is a failure. Without it, code that exits early
+  // (a top-level process.exit) or crashes a test file at load time hides
+  // tests, and the run looks complete with fewer tests than the suite has.
+  expectedTests?: number;
 }
+
+/** Name of the visible test check in standardChecks; the pipeline sets its expected count. */
+export const VISIBLE_TESTS = "visible-tests";
 
 /**
  * Why a check failed. The orchestrator uses this to tell environment
  * problems (never worth escalating to a stronger model) from code problems.
  */
-export type CheckFailure = "timeout" | "spawn_error" | "exit_code" | "no_tests";
+export type CheckFailure = "timeout" | "spawn_error" | "exit_code" | "no_tests" | "missing_tests";
 
 export interface CheckResult {
   name: string;
@@ -162,6 +170,7 @@ export function runCheck(spec: CheckSpec, options: RunCheckOptions = {}): Promis
       else if (timedOut) failure = "timeout";
       else if (exitCode !== 0) failure = "exit_code";
       else if (spec.expectTests && !testsRun) failure = "no_tests";
+      else if (spec.expectedTests !== undefined && (testsRun ?? 0) < spec.expectedTests) failure = "missing_tests";
 
       resolve({
         name: spec.name,
@@ -224,7 +233,7 @@ export function standardChecks(options: StandardCheckOptions): CheckSpec[] {
       ...common,
     },
     {
-      name: "visible-tests",
+      name: VISIBLE_TESTS,
       executable: process.execPath,
       // node expands the glob itself; TAP output carries a stable "# tests N" line.
       args: ["--test", "--test-reporter=tap", "test/**/*.test.ts"],

@@ -36,10 +36,24 @@ npm run repod -- experiment --holdout <dir> --arms A,C --runs 3 --label formal
 ```
 
 Runs go in rounds (A, C, A, C, ...), so drift during the day affects every
-arm alike. Every run re-reads recorded spend; once the cumulative budget
-refuses a call the experiment stops and says so. Each run's report stays in
-`runs/<runId>/report.json`; the summary goes to
-`runs/experiments/<experimentId>.json`.
+arm alike. Each run's report stays in `runs/<runId>/report.json`; the
+summary goes to `runs/experiments/<experimentId>.json` and is rewritten
+after every run, so an interruption keeps the results so far.
+
+The holdout folder must contain `expected-tests.json`
+(`{"expectedTests": n}`, the size of the holdout suite counted on the
+reference implementation); without it the experiment refuses to start. It
+stays private with the holdout tests and is not copied into run folders.
+
+The experiment stops early, keeping its results, when:
+
+- the cumulative budget refuses a call (a run-budget refusal only ends that
+  run);
+- its inputs change: a fingerprint of `src/`, `config/`, `eval/demo/`,
+  `sample-repo/` and the holdout folder is taken at the start, recorded in
+  the results with the source commit, and compared before every run;
+- something fails outside a run's own pipeline (a workspace that cannot be
+  created, a ledger that cannot be read).
 
 ## Procedure
 
@@ -55,17 +69,26 @@ interventions.
 
 How they are computed:
 
-- Holdout pass rate: passed / run from the holdout test summary. Holdout
-  tests run only on a frozen result, so a run that did not complete every
-  task scores 0 and is marked "holdout not run".
+- Holdout pass rate: passed / expected, where "expected" is the count in
+  `expected-tests.json`, not the number of tests the runner happened to
+  execute (a crashed test file or an early `process.exit` would otherwise
+  shrink the denominator). Holdout tests run only on a frozen result, so a
+  run that did not complete every task scores 0 and is marked "holdout not
+  run".
+- Holdout fully passed: the holdout check itself succeeded (exit code, no
+  timeout, at least the expected number of tests), every expected test
+  passed, and the frozen content was unchanged afterwards. Equal counts
+  alone do not qualify.
 - Cost by phase (list prices): coordination is planning, plan revision and
   the closing summary; execution is each task's first attempt; rework is
   later attempts and the triage before them; review is reviewer calls.
 - Calls: requests in the run's ledger, including retries and format repairs.
 - Human interventions: none by construction; experiment runs use default
-  answers and approve the plan automatically. Results report median and range; three runs are exploratory
-evidence only. Running time of the sample's 20,000-task cases is measured
-and reported separately; it is not a pass condition.
+  answers and approve the plan automatically.
+
+Results report median and range; three runs are exploratory evidence only.
+Running time of the sample's 20,000-task cases is measured and reported
+separately; it is not a pass condition.
 
 ## Demo kit (`eval/demo/`)
 
@@ -75,7 +98,7 @@ Trusted input for every run, written before any model sees the repository:
 |---|---|
 | `request.md` | The user request given to Meta |
 | `contract.md` | Interface conventions shown to every executor |
-| `checks.json` | Which check kinds exist, and the visible test groups with their order (`planner`, then `cli`, then `docs`) |
+| `checks.json` | Which check kinds exist, the visible test groups with their order (`planner`, then `cli`, then `docs`), and the number of tests in each group and in the baseline |
 | `single-model.json` | Arm A's one task: title, acceptance criteria and write scope |
 | `visible/*.test.ts` | The groups' tests. Each is copied into the run workspace's `test/` only when the task that owns its group runs |
 

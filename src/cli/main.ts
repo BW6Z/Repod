@@ -1,10 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseEnv } from "node:util";
 import { z } from "zod";
 import { loadConfig } from "../config/load.ts";
-import { renderSummary, runExperiment } from "../eval/experiment.ts";
+import { fingerprintDirs, renderSummary, runExperiment } from "../eval/experiment.ts";
 import { loadDemoKit, prepareHoldout } from "../eval/kit.ts";
 import { MetaAdapter } from "../gateway/adapters/meta.ts";
 import { ModelGateway } from "../gateway/gateway.ts";
@@ -193,6 +194,7 @@ async function run(options: CommandOptions): Promise<number> {
       }),
       holdoutChecks,
       checkGroups: kit.checkGroups,
+      ...(kit.baselineTests === null ? {} : { baselineTests: kit.baselineTests }),
       visibleTestsDir: kit.visibleTestsDir,
       availableChecks: kit.availableChecks,
       remainingBudgetUsd: Math.min(limits.budgetUsd, limits.totalBudgetUsd - spentBefore),
@@ -204,6 +206,17 @@ async function run(options: CommandOptions): Promise<number> {
     printReport(report, path.relative(repoRoot, reportFile));
     return report.status === "completed" ? 0 : 1;
   });
+}
+
+/** The repository's current commit, with "+dirty" if the working tree has changes; null if git is unavailable. */
+function sourceCommit(): string | null {
+  try {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" }).trim() !== "";
+    return dirty ? `${head}+dirty` : head;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -218,10 +231,13 @@ async function experiment(options: CommandOptions): Promise<number> {
   const { limits } = config;
 
   const adapter = metaAdapter();
+  const holdoutDir = path.resolve(options.holdout!);
   // The lock is held for the whole experiment; each run re-reads past spend.
   return withPaidRunLock("experiment", async () => {
     const label = options.label ?? "debug";
     const experimentId = `exp-${label}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const file = path.join(runsDir, "experiments", `${experimentId}.json`);
+    await mkdir(path.dirname(file), { recursive: true });
     const result = await runExperiment({
       experimentId,
       label,
@@ -231,9 +247,21 @@ async function experiment(options: CommandOptions): Promise<number> {
       kit,
       baselineDir: path.join(repoRoot, "sample-repo"),
       runsDir,
-      holdoutDir: path.resolve(options.holdout!),
+      holdoutDir,
       tscEntry: path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"),
       spentUsd: () => totalSpentUsd(runsDir),
+      // Everything that decides what a run does; a change mid-experiment stops it.
+      fingerprint: () =>
+        fingerprintDirs({
+          src: path.join(repoRoot, "src"),
+          config: configDir,
+          demoKit: path.join(repoRoot, "eval", "demo"),
+          baseline: path.join(repoRoot, "sample-repo"),
+          holdout: holdoutDir,
+        }),
+      sourceCommit: sourceCommit(),
+      // Written after every run, so an interruption keeps the results so far.
+      save: (partial) => writeFile(file, JSON.stringify(partial, null, 2)),
       gatewayFor: (preset, ledger, spentBeforeUsd) =>
         new ModelGateway({
           preset,
@@ -246,9 +274,6 @@ async function experiment(options: CommandOptions): Promise<number> {
       log: (line) => console.log(line),
     });
 
-    const file = path.join(runsDir, "experiments", `${experimentId}.json`);
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(result, null, 2));
     console.log(`\n${renderSummary(result)}\n\nResults: ${path.relative(repoRoot, file)}`);
     return result.stoppedEarly ? 1 : 0;
   });

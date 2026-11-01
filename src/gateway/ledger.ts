@@ -45,7 +45,18 @@ const taskId = z.string().nullable();
 const LedgerEventSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("run_started"), preset: z.string(), request: z.string() }),
   z.object({ ...base, type: z.literal("call_start"), role: z.enum(ROLES), model: z.string(), taskId, attemptId, reservedUsd: Money }),
-  z.object({ ...base, type: z.literal("call_refused"), role: z.enum(ROLES), model: z.string(), taskId, attemptId, reservedUsd: Money, reason: z.string() }),
+  z.object({
+    ...base,
+    type: z.literal("call_refused"),
+    role: z.enum(ROLES),
+    model: z.string(),
+    taskId,
+    attemptId,
+    reservedUsd: Money,
+    reason: z.string(),
+    // Which budget refused it; absent in ledgers written before it existed.
+    scope: z.enum(["run", "total"]).optional(),
+  }),
   z.object({
     ...base,
     type: z.literal("call_end"),

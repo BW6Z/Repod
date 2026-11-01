@@ -192,7 +192,10 @@ describe("ModelGateway: budget", () => {
     const result = await gateway(adapter, new SpendTracker(3, 10, 9.999)).call(request());
     assert.equal(!result.ok && result.failure, "budget");
     assert.equal(adapter.requests.length, 0);
-    assert.deepEqual((await readEvents(ledger.file)).map((e) => e.type), ["call_refused"]);
+    const events = await readEvents(ledger.file);
+    assert.deepEqual(events.map((e) => e.type), ["call_refused"]);
+    // Which budget refused it is recorded as data, not only as text.
+    assert.equal(events[0]?.type === "call_refused" && events[0].scope, "total");
   });
 
   test("a larger schema reserves more budget", async () => {

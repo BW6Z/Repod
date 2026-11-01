@@ -25,6 +25,9 @@ export interface DemoKit {
   availableChecks: ReadonlySet<CheckKind>;
   checkGroups: CheckGroup[];
   visibleTestsDir: string;
+  // Tests the baseline's own test files contain (they always run with the
+  // visible tests); null when not declared.
+  baselineTests: number | null;
   singleModel: SingleModelSetup;
 }
 
@@ -37,6 +40,7 @@ export type SingleModelSetup = z.infer<typeof SingleModelSetup>;
 
 const KitChecks = z.strictObject({
   availableChecks: z.array(z.enum(CHECK_KINDS)),
+  baselineTests: z.number().int().nonnegative().optional(),
   groups: z.array(CheckGroup),
 });
 
@@ -45,7 +49,7 @@ export async function loadDemoKit(dir: string): Promise<DemoKit> {
   const contract = (await readFile(path.join(dir, "contract.md"), "utf8")).trim();
   const parsed = KitChecks.safeParse(JSON.parse(await readFile(path.join(dir, "checks.json"), "utf8")));
   if (!parsed.success) throw new Error(`Invalid ${path.join(dir, "checks.json")}:\n${parsed.error.message}`);
-  const { availableChecks, groups } = parsed.data;
+  const { availableChecks, baselineTests, groups } = parsed.data;
 
   const visibleTestsDir = path.join(dir, "visible");
   const present = new Set(await readdir(visibleTestsDir));
@@ -66,7 +70,32 @@ export async function loadDemoKit(dir: string): Promise<DemoKit> {
   const single = SingleModelSetup.safeParse(JSON.parse(await readFile(singleFile, "utf8")));
   if (!single.success) throw new Error(`Invalid ${singleFile}:\n${single.error.message}`);
 
-  return { request, contract, availableChecks: new Set(availableChecks), checkGroups: groups, visibleTestsDir, singleModel: single.data };
+  return {
+    request, contract, availableChecks: new Set(availableChecks), checkGroups: groups, visibleTestsDir,
+    baselineTests: baselineTests ?? null, singleModel: single.data,
+  };
+}
+
+const HoldoutExpected = z.strictObject({ expectedTests: z.number().int().positive() });
+
+/**
+ * The number of tests the holdout suite contains, from
+ * `<holdout dir>/expected-tests.json` ({"expectedTests": n}), kept private
+ * with the tests themselves. null when the file does not exist.
+ */
+export async function readHoldoutExpected(sourceDir: string): Promise<number | null> {
+  const file = path.join(sourceDir, "expected-tests.json");
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const parsed = HoldoutExpected.safeParse(JSON.parse(text));
+  if (!parsed.success) throw new Error(`Invalid ${file}:
+${parsed.error.message}`);
+  return parsed.data.expectedTests;
 }
 
 /**
@@ -74,11 +103,13 @@ export async function loadDemoKit(dir: string): Promise<DemoKit> {
  * they import the frozen workspace as ../workspace, and returns the check
  * that runs them. They are kept outside the workspace so that copying them
  * never changes the frozen content, and outside the public repository until
- * the experiments are over.
+ * the experiments are over. If the holdout folder declares its test count,
+ * the check fails when fewer tests run.
  */
 export async function prepareHoldout(runDir: string, sourceDir: string, timeoutMs: number, maxOutputBytes: number): Promise<CheckSpec[]> {
   const files = (await readdir(sourceDir)).filter((file) => file.endsWith(".test.ts"));
   if (files.length === 0) throw new Error(`No holdout tests (*.test.ts) in ${sourceDir}`);
+  const expectedTests = await readHoldoutExpected(sourceDir);
   const target = path.join(runDir, "holdout");
   await mkdir(target, { recursive: true });
   for (const file of files) await copyFile(path.join(sourceDir, file), path.join(target, file));
@@ -90,5 +121,6 @@ export async function prepareHoldout(runDir: string, sourceDir: string, timeoutM
     timeoutMs,
     maxOutputBytes,
     expectTests: true,
+    ...(expectedTests === null ? {} : { expectedTests }),
   }];
 }

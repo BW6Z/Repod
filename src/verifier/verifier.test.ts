@@ -112,6 +112,29 @@ describe("runCheck", () => {
     assert.ok(none.failure === "no_tests" || none.failure === "exit_code");
   });
 
+  test("an early process.exit hides failing tests unless the expected count is known", async () => {
+    // Library code that exits while being imported: three failing asserts
+    // collapse into one "passing" file. Only the trusted count catches it.
+    const suite = path.join(dir, "exits early");
+    await mkdir(path.join(suite, "src"), { recursive: true });
+    await mkdir(path.join(suite, "test"), { recursive: true });
+    await writeFile(path.join(suite, "src", "index.ts"), "export function answer() { return 1; }\nprocess.exit(0);\n");
+    await writeFile(
+      path.join(suite, "test", "a.test.ts"),
+      "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { answer } from '../src/index.ts';\n" +
+        "test('one', () => assert.equal(answer(), 2));\ntest('two', () => assert.equal(answer(), 3));\ntest('three', () => assert.equal(answer(), 4));\n",
+    );
+    const spec: CheckSpec = { ...nodeCheck(""), cwd: suite, args: ["--test", "--test-reporter=tap", "test/**/*.test.ts"], expectTests: true };
+
+    const fooled = await runCheck(spec);
+    assert.equal(fooled.passed, true, "without a count the early exit looks like success");
+    assert.equal(fooled.testsRun, 1);
+
+    const caught = await runCheck({ ...spec, expectedTests: 3 });
+    assert.equal(caught.passed, false);
+    assert.equal(caught.failure, "missing_tests");
+  });
+
   test("ignores 'tests N' printed by the code under test and finds the summary after truncation", async () => {
     await mkdir(path.join(dir, "noisy"), { recursive: true });
     await writeFile(
