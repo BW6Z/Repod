@@ -4,13 +4,17 @@ import path from "node:path";
 /**
  * Files executors may never write. Changing any of them could let a model
  * weaken the checks that judge its own work. Patterns are workspace-relative
- * POSIX paths; a trailing "/**" protects a whole directory.
+ * POSIX paths; a trailing "/**" protects a whole directory, and a leading
+ * "**\/" protects a file name in every folder.
  */
 export const PROTECTED_PATTERNS: readonly string[] = [
   "package.json",
   "package-lock.json",
   "tsconfig.json",
-  ".gitattributes",
+  // Git reads these in any folder; they could hide changes from the diffs
+  // that repairs and reviews are based on, or show them as binary.
+  "**/.gitattributes",
+  "**/.gitignore",
   "test/**", // visible tests are written by humans before the run
 ];
 
@@ -96,6 +100,10 @@ export function isProtected(normalized: string, patterns: readonly string[] = PR
     if (p.endsWith("/**")) {
       const dir = p.slice(0, -3);
       return candidate === dir || candidate.startsWith(dir + "/");
+    }
+    if (p.startsWith("**/")) {
+      const name = p.slice(3);
+      return candidate === name || candidate.endsWith("/" + name);
     }
     return candidate === p;
   });

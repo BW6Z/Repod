@@ -193,8 +193,9 @@ ones, for example `runs/rehearsal`. Leave both unset for real runs.
 - Running checks on model-written code is not sandboxed beyond a separate
   working copy, an allowlisted environment without API keys, and a timeout
   that kills the whole process tree. Network and filesystem access are not
-  restricted. Git in the run workspace ignores system and global config and
-  has fsmonitor, hooks and signing disabled, but model-written code could
+  restricted. Git in the run workspace ignores system and global config,
+  system attributes and the user's own ignore and attributes files, and has
+  fsmonitor, hooks and signing disabled, but model-written code could
   still define git filters in the workspace's own `.git/config`; they would
   run without API keys. Repod is not a safe
   platform for running arbitrary code and only runs its bundled sample.

@@ -491,6 +491,31 @@ describe("runPipeline: check groups", () => {
     await readFile(path.join(workspace.root, "test", "sub.test.ts")); // both groups are in the final result
   });
 
+  test("a repair sees only its own write scope in the diff, not the copied visible tests", async () => {
+    const BROKEN_SUB = WITH_MUL + "export function sub(a: number, b: number): number {\n  return a + b;\n}\n";
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(
+        task("T1", { check_groups: ["mul"] }),
+        task("T2", { check_groups: ["sub"], depends_on: ["T1"], write_files: ["src/math.ts", "src/notes.ts"] }),
+      )],
+      executor_output: [
+        writes({ "src/math.ts": WITH_MUL }),
+        writes({ "src/math.ts": BROKEN_SUB, "src/notes.ts": "export const notes = 1;\n" }),
+        writes({ "src/math.ts": WITH_MUL_SUB, "src/notes.ts": "export const notes = 1;\n" }),
+      ],
+      triage_decision: [triage("repair")],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway, { checkGroups: groups, visibleTestsDir });
+    assert.equal(report.status, "completed", report.problems.join("\n"));
+
+    const repair = gateway.calls("executor_output")[2]!.input;
+    const diff = /Changes made so far:\n\n```diff\n([\s\S]*?)\n```/.exec(repair)?.[1] ?? "";
+    assert.match(diff, /diff --git a\/src\/math\.ts/);
+    assert.match(diff, /diff --git a\/src\/notes\.ts/);
+    assert.doesNotMatch(diff, /test\//, "the copied visible tests are not the executor's changes");
+  });
+
   test("a failed task's files and tests are rolled back so they cannot fail unrelated later tasks", async () => {
     const gateway = new ScriptedGateway({
       plan_response: [plan(

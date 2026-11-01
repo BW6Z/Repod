@@ -531,7 +531,7 @@ class Run {
         // No coordinator to triage: the one task keeps repairing, without
         // guidance, until the run-wide rework limit above ends it. That
         // limit bounds a coordinated run's total repairs in the same way.
-        previous = { model, diff: await diffAgainstBaseline(this.o.workspace), failure: attempt.evidence };
+        previous = { model, diff: await diffAgainstBaseline(this.o.workspace, task.write_files), failure: attempt.evidence };
         guidance = null;
         continue;
       }
@@ -549,7 +549,7 @@ class Run {
 
       // The next attempt continues from the current changes rather than
       // starting over, so it needs the diff and the failure evidence.
-      previous = { model, diff: await diffAgainstBaseline(this.o.workspace), failure: attempt.evidence };
+      previous = { model, diff: await diffAgainstBaseline(this.o.workspace, task.write_files), failure: attempt.evidence };
       guidance = decision.instructions;
       if (next === "escalate") {
         model = preset.roles.critical;
@@ -695,15 +695,17 @@ class Run {
     const toReview = outcomes.filter((o) => o.status === "passed" && o.reviewRequired);
     if (toReview.length === 0 || this.stopReason) return findings;
 
-    const diff = await diffAgainstBaseline(this.o.workspace);
     for (const outcome of toReview) {
       const task = plan.find((t) => t.id === outcome.taskId)!;
+      // Only this task's files: other tasks' changes and the copied visible
+      // tests would cost tokens and invite findings against the wrong task.
+      const diff = await diffAgainstBaseline(this.o.workspace, task.write_files);
       const input = [
         `# Task ${task.id}: ${task.title}`,
         task.description,
         `# Acceptance criteria\n${task.acceptance.map((a) => `- ${a}`).join("\n")}`,
         `# Files this task changed\n${task.write_files.join(", ")}`,
-        `# Diff against the baseline\n\`\`\`diff\n${diff}\n\`\`\``,
+        `# Diff of these files against the baseline\n\`\`\`diff\n${diff}\n\`\`\``,
       ].join("\n\n");
       const result = await this.callModel("review", "reviewer", this.o.preset.roles.review, "review", ReviewOutput, "review_output", input, task.id);
       if (!result.ok) {

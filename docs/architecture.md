@@ -67,7 +67,8 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
    finished tasks; the task that was running is "stopped" and the rest are
    "skipped".
 5. **Review**: tasks that require review (complex or high impact, or docs
-   whose checks cannot run) are reviewed by the preset's review model.
+   whose checks cannot run) are reviewed by the preset's review model. The
+   reviewer sees the diff of that task's write scope only.
    Blocking findings and findings that need a human decision leave the run
    incomplete; they are not fixed automatically yet.
 6. **Freeze**: only when every task passed. The dev checks run again on the
@@ -122,8 +123,9 @@ Meta is called 2 to 6 times per run in normal operation (plus triage).
   starts (so a file an earlier task created is read as it was written). A
   context file that still does not exist then (a dependency passed without
   creating it) fails the task before any executor call. Repairs and
-  escalations also get the previous diff, failure evidence (first 8000
-  characters) and Meta's guidance. The reply rules (protected paths, whether more files may be
+  escalations also get the diff of the task's write scope (not the visible
+  tests copied into the workspace, nor files outside the scope), failure
+  evidence (first 8000 characters) and Meta's guidance. The reply rules (protected paths, whether more files may be
   requested) are generated from the enforced lists and limits.
   `context_version` hashes every task field, the contract, guidance, the
   previous attempt and the file contents (file order ignored); output that
@@ -221,11 +223,14 @@ our own timeout and an unreadable response body are not.
   (without `node_modules` and `.git`) committed in its own git repository.
   It is never pushed.
 - **Git isolation**: every git command runs with the allowlisted
-  environment (no API keys), `GIT_CONFIG_NOSYSTEM=1` and
-  `GIT_CONFIG_GLOBAL=/dev/null`, and command-line settings that disable
-  `core.fsmonitor`, hooks and commit signing. Model-written code could edit
-  the workspace's `.git/config` while tests run; command-line settings take
-  precedence over it.
+  environment (no API keys), `GIT_CONFIG_NOSYSTEM=1`,
+  `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_ATTR_NOSYSTEM=1`, and command-line
+  settings that disable `core.fsmonitor`, hooks and commit signing and point
+  `core.excludesFile` and `core.attributesFile` at `/dev/null` (the user's
+  own `~/.config/git/ignore` and `attributes` are read even when the global
+  config is replaced). Model-written code could edit the workspace's
+  `.git/config` while tests run; command-line settings take precedence over
+  it.
 - **Write scope and freshness**: every planned task lists `write_files`
   (validated at planning time: not protected, no duplicates). Output that
   touches any other file is rejected. When the input is assembled, the
@@ -243,7 +248,9 @@ our own timeout and an unreadable response body are not.
   another path of the same output, no NUL or bare CR, freshness). CRLF is
   normalized to LF. One invalid file rejects the whole output. Previous
   contents are read before any write; a read error other than "not found"
-  aborts before writing. If a write fails midway, each written file is
+  aborts before writing. A new file is created under the plan's spelling
+  of its path, not the executor's, because Windows keeps the case a file
+  was first created with. If a write fails midway, each written file is
   restored independently and the original error is reported; a folder
   created along the way is left in place, since it is empty and only files
   are restored.
@@ -259,8 +266,16 @@ our own timeout and an unreadable response body are not.
   `node_modules`, and not protected. New and existing targets get the same
   check, so a link such as `alias -> test` cannot be used to create files in
   a protected folder. The returned path is the real landing location.
-- **Diff**: `git add -A` then `git diff --cached <baseline>`, so new files are
-  included.
+- **Diff**: `git add -A --force` then `git diff --cached --text <baseline>`,
+  so new and ignored files are included and no attributes file can turn a
+  change into "Binary files differ". Repairs and reviews pass the task's
+  write scope as literal pathspecs, resolved to their real spelling on
+  disk. Known limitation: the diff is against the baseline, so if an
+  earlier task changed the same file, its changes appear too.
+- **Protected files**: `package.json`, `package-lock.json`,
+  `tsconfig.json`, everything under `test/`, and `.gitattributes` and
+  `.gitignore` in every folder (they could hide changes from the diffs
+  repairs and reviews rely on).
 - **Manifest**: SHA-256 of every file except `.git` and `node_modules`
   (neither is writable by executors).
 - **Checks**: `node <tsc> -p tsconfig.json` and

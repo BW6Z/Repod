@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -204,6 +204,14 @@ describe("write scope, freshness and taint", () => {
     }
   });
 
+  test("a new file is created under the plan's spelling, whatever case the executor used", async () => {
+    const written = await applyExecutorOutput(workspace, output([{ path: "SRC/NewCase.ts", content: "export {};\n" }]), scoped({}, ["src/newcase.ts"]), limits);
+    assert.deepEqual(written, ["src/newcase.ts"]);
+    const names = await readdir(path.join(workspace.root, "src"));
+    assert.ok(names.includes("newcase.ts"), names.join(", "));
+    assert.ok(!names.includes("NewCase.ts"));
+  });
+
   test("a file outside the write scope rejects the whole output", async () => {
     await assert.rejects(
       applyExecutorOutput(workspace, output([{ path: "src/other.ts", content: "export {};\n" }]), scoped({}), limits),
@@ -267,6 +275,68 @@ describe("git isolation in the run workspace", () => {
     assert.equal(env.ANTHROPIC_API_KEY, undefined);
     assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
     assert.ok(env.GIT_CONFIG_GLOBAL);
+  });
+
+  test("the user's own git ignore and attributes files change neither the baseline nor the diff", async () => {
+    const home = path.join(base, "home with git config");
+    await mkdir(path.join(home, ".config", "git"), { recursive: true });
+    await writeFile(path.join(home, ".config", "git", "ignore"), "*.md\n");
+    await writeFile(path.join(home, ".config", "git", "attributes"), "*.ts -diff\n");
+    const source = path.join(base, "baseline with readme");
+    for (const [file, content] of Object.entries({ ...BASELINE, "README.md": "# Readme\n" })) {
+      await mkdir(path.dirname(path.join(source, file)), { recursive: true });
+      await writeFile(path.join(source, file), content);
+    }
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    try {
+      const ws = await createRunWorkspace(source, path.join(base, "runs"), "run-user-git");
+      assert.match(execFileSync("git", ["ls-files"], { cwd: ws.root, encoding: "utf8" }), /^README\.md$/m);
+      await writeFile(path.join(ws.root, "src", "math.ts"), "export const changed = 1;\n");
+      await writeFile(path.join(ws.root, "NOTES.md"), "new\n");
+      const diff = await diffAgainstBaseline(ws);
+      assert.doesNotMatch(diff, /Binary files/);
+      assert.match(diff, /\+export const changed = 1;/);
+      assert.match(diff, /b\/NOTES\.md/);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  test("attributes and ignore files inside the workspace cannot hide changes from the diff", async () => {
+    const ws = await createRunWorkspace(baselineDir, path.join(base, "runs"), "run-hidden");
+    // What model-written code could create while its tests run.
+    await writeFile(path.join(ws.root, "src", ".gitattributes"), "* -diff\n");
+    await writeFile(path.join(ws.root, ".gitignore"), "src/extra.ts\n");
+    await writeFile(path.join(ws.root, "src", "math.ts"), "export const changed = 1;\n");
+    await writeFile(path.join(ws.root, "src", "extra.ts"), "export const extra = 1;\n");
+    const diff = await diffAgainstBaseline(ws);
+    assert.doesNotMatch(diff, /Binary files/);
+    assert.match(diff, /\+export const changed = 1;/);
+    assert.match(diff, /\+export const extra = 1;/);
+  });
+
+  test("a diff limited to a task's files leaves out everything else, by real spelling and literally", async () => {
+    const ws = await createRunWorkspace(baselineDir, path.join(base, "runs"), "run-scoped-diff");
+    await writeFile(path.join(ws.root, "src", "math.ts"), "export const changed = 1;\n");
+    await writeFile(path.join(ws.root, "src", "a.ts"), "export const a = 1;\n");
+    await writeFile(path.join(ws.root, "src", "[ab].ts"), "export const bracket = 1;\n");
+    await writeFile(path.join(ws.root, "test", "copied.test.ts"), "// a visible test copied in\n");
+
+    const own = await diffAgainstBaseline(ws, ["SRC/Math.ts"]); // the plan's spelling may differ in case
+    assert.match(own, /\+export const changed = 1;/);
+    assert.doesNotMatch(own, /src\/a\.ts|copied\.test|bracket/);
+
+    const literal = await diffAgainstBaseline(ws, ["src/[ab].ts"]); // not a glob matching src/a.ts
+    assert.match(literal, /\+export const bracket = 1;/);
+    assert.doesNotMatch(literal, /export const a = 1/);
+
+    assert.equal(await diffAgainstBaseline(ws, []), "", "no paths means no diff, not the whole workspace");
+    assert.equal(await diffAgainstBaseline(ws, ["../outside.ts"]), "");
   });
 
   test("a core.fsmonitor command planted in the workspace config never runs", async () => {

@@ -53,6 +53,15 @@ describe("isProtected", () => {
     assert.equal(isProtected("src/package.json"), false);
     assert.equal(isProtected("tests/x.ts"), false);
   });
+
+  test("git attribute and ignore files are protected in every folder", () => {
+    for (const file of [".gitattributes", "src/.gitattributes", ".gitignore", "a/b/.GitIgnore"]) {
+      assert.equal(isProtected(file), true, file);
+    }
+    for (const file of ["src/gitignore.ts", "src/x.gitignore", "docs/.gitignore.md"]) {
+      assert.equal(isProtected(file), false, file);
+    }
+  });
 });
 
 describe("resolveAllowedPath", () => {

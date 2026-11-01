@@ -61,9 +61,13 @@ export function contextVersion(parts: ExecutorInputParts): string {
   return createHash("sha256").update(JSON.stringify(material)).digest("hex").slice(0, 16);
 }
 
-/** Human-readable list of protected paths for the reply rules ("test/**" -> "test/"). */
+/** Human-readable list of protected paths for the reply rules ("test/**" -> "test/", a name in every folder -> "<name> in any folder"). */
 function protectedList(): string {
-  return PROTECTED_PATTERNS.map((p) => (p.endsWith("/**") ? p.slice(0, -2) : p)).join(", ");
+  return PROTECTED_PATTERNS.map((p) => {
+    if (p.endsWith("/**")) return p.slice(0, -2);
+    if (p.startsWith("**/")) return `${p.slice(3)} in any folder`;
+    return p;
+  }).join(", ");
 }
 
 /**

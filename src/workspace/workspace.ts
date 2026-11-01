@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
-import { cp, lstat, mkdir, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { ledgerPath } from "../gateway/ledger.ts";
@@ -81,20 +81,28 @@ const RUN_GIT_SETTINGS = [
   "-c", "commit.gpgsign=false",
   "-c", "core.autocrlf=false", // byte-exact: diffs show exactly what executors wrote
   "-c", "core.quotepath=false",
+  // The user's own ignore and attributes files (~/.config/git/ignore and
+  // attributes) are read even when the global config is replaced; they could
+  // drop files from the baseline or turn diffs into "Binary files differ".
+  "-c", `core.excludesFile=${GIT_NULL}`,
+  "-c", `core.attributesFile=${GIT_NULL}`,
   "-c", "user.name=Repod Run",
   "-c", "user.email=repod-run@localhost",
 ];
 
 /**
  * Environment for git in a run workspace: no API keys, and the user's system
- * and global git configuration ignored, so their hooks, signing or excludes
- * cannot change what a run does or records.
+ * and global git configuration ignored, as well as the system attributes
+ * file, so their hooks, signing, excludes or attributes cannot change what a
+ * run does or records (the user's own ignore and attributes files are
+ * switched off in RUN_GIT_SETTINGS).
  */
 export function gitEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return {
     ...minimalEnvironment(source),
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: GIT_NULL,
+    GIT_ATTR_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
   };
 }
@@ -135,7 +143,9 @@ export async function createRunWorkspace(baselineDir: string, runsDir: string, r
   });
 
   await git(root, ["init", "-q", "-b", "run"]);
-  await git(root, ["add", "-A"]);
+  // --force: every copied file is part of the baseline, whatever a
+  // .gitignore in the sample says, matching what the freeze manifest hashes.
+  await git(root, ["add", "-A", "--force"]);
   await git(root, ["commit", "-q", "-m", "baseline"]);
   const baselineCommit = (await git(root, ["rev-parse", "HEAD"])).trim();
 
@@ -189,7 +199,8 @@ export async function applyExecutorOutput(
   if (workspace.tainted) throw new WorkspaceTaintedError(workspace.tainted);
 
   const reasons: string[] = [];
-  const allowed = new Set(expected.allowedWrites.map((p) => normalizeRelativePath(p).toLowerCase()));
+  // Write-scope key (lower case) -> the spelling the plan used.
+  const allowed = new Map(expected.allowedWrites.map((p) => [normalizeRelativePath(p).toLowerCase(), normalizeRelativePath(p)]));
   if (output.task_id !== expected.taskId) {
     reasons.push(`output is for task "${output.task_id}", expected "${expected.taskId}"`);
   }
@@ -204,10 +215,8 @@ export async function applyExecutorOutput(
   const planned: Array<{ relative: string; target: string; content: string }> = [];
   for (const file of output.files) {
     let relative: string;
-    let target: string;
     try {
       relative = normalizeRelativePath(file.path);
-      target = await resolveAllowedPath(workspace.root, file.path);
     } catch (error) {
       if (error instanceof PathRejectedError) {
         reasons.push(error.message);
@@ -218,9 +227,25 @@ export async function applyExecutorOutput(
 
     // Case-insensitive, because "src/A.ts" and "src/a.ts" are the same file on Windows.
     const key = relative.toLowerCase();
-    if (!allowed.has(key)) {
+    const plannedSpelling = allowed.get(key);
+    if (plannedSpelling === undefined) {
       reasons.push(`"${file.path}" is outside the task's write scope`);
       continue;
+    }
+    // A new file is created under the plan's spelling, not the executor's:
+    // Windows keeps the case a file was first created with, so "Planner.ts"
+    // for "planner.ts" would break case-sensitive imports and type checks
+    // for good. An existing file keeps its name either way.
+    relative = plannedSpelling;
+    let target: string;
+    try {
+      target = await resolveAllowedPath(workspace.root, plannedSpelling);
+    } catch (error) {
+      if (error instanceof PathRejectedError) {
+        reasons.push(error.message);
+        continue;
+      }
+      throw error;
     }
     if (seen.has(key)) {
       reasons.push(`duplicate path "${file.path}"`);
@@ -340,7 +365,7 @@ async function walk(root: string, dir = root, out: Array<{ relative: string; ful
 
 const byPath = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Regular files as sorted POSIX relative paths. Used for plan validation and the repo summary. */
+/** Regular files as sorted POSIX relative paths: plan validation, the repo summary and existence checks. */
 export async function listFiles(root: string): Promise<string[]> {
   return (await walk(root))
     .filter(({ entry }) => entry.isFile())
@@ -368,10 +393,33 @@ export async function snapshotManifest(workspace: RunWorkspace): Promise<Record<
 
 /**
  * Diff against the baseline including new files. A plain `git diff` omits
- * untracked files, so everything is staged first and the index is compared
- * with the baseline commit.
+ * untracked files, so everything is staged first (ignored files too) and the
+ * index is compared with the baseline commit. `--text` keeps every change
+ * readable even if an attributes file marks it binary.
+ *
+ * With `paths`, only those files are included: repairs and reviews of one
+ * task see that task's write scope, not the visible tests copied into the
+ * workspace or other tasks' files. If an earlier task changed the same file,
+ * its changes are included too (the diff is against the baseline, not
+ * against the state before this task). Paths are matched literally (no glob
+ * characters) and by their real spelling on disk, since git pathspecs are
+ * case-sensitive.
  */
-export async function diffAgainstBaseline(workspace: RunWorkspace): Promise<string> {
-  await git(workspace.root, ["add", "-A"]);
-  return git(workspace.root, ["diff", "--cached", "--no-color", "--no-ext-diff", workspace.baselineCommit]);
+export async function diffAgainstBaseline(workspace: RunWorkspace, paths?: readonly string[]): Promise<string> {
+  await git(workspace.root, ["add", "-A", "--force"]);
+  const base = ["--literal-pathspecs", "diff", "--cached", "--no-color", "--no-ext-diff", "--text", workspace.baselineCommit];
+  if (paths === undefined) return git(workspace.root, base);
+
+  const realRoot = await realpath(workspace.root);
+  const specs: string[] = [];
+  for (const requested of paths) {
+    try {
+      const landing = await resolveAllowedPath(workspace.root, requested, []);
+      specs.push(path.relative(realRoot, landing).split(path.sep).join("/"));
+    } catch (error) {
+      if (!(error instanceof PathRejectedError)) throw error;
+    }
+  }
+  // An empty pathspec would mean "everything".
+  return specs.length === 0 ? "" : git(workspace.root, [...base, "--", ...specs]);
 }
