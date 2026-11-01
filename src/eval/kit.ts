@@ -14,6 +14,10 @@ import type { CheckSpec } from "../verifier/verifier.ts";
  *   <dir>/contract.md    interface conventions for executors
  *   <dir>/checks.json    available check kinds and visible test groups
  *   <dir>/visible/       the groups' test files
+ *   <dir>/single-model.json  experiment arm A's one task: title, acceptance
+ *                        criteria and write scope (the files SPEC.md and the
+ *                        contract name), since arm A has no coordinator to
+ *                        plan them
  */
 export interface DemoKit {
   request: string;
@@ -21,7 +25,15 @@ export interface DemoKit {
   availableChecks: ReadonlySet<CheckKind>;
   checkGroups: CheckGroup[];
   visibleTestsDir: string;
+  singleModel: SingleModelSetup;
 }
+
+const SingleModelSetup = z.strictObject({
+  title: z.string().min(1),
+  acceptance: z.array(z.string().min(1)).min(1),
+  writeFiles: z.array(z.string().min(1)).min(1),
+});
+export type SingleModelSetup = z.infer<typeof SingleModelSetup>;
 
 const KitChecks = z.strictObject({
   availableChecks: z.array(z.enum(CHECK_KINDS)),
@@ -50,7 +62,11 @@ export async function loadDemoKit(dir: string): Promise<DemoKit> {
       if (!names.has(required) || required === group.name) throw new Error(`Check group "${group.name}" requires unknown group "${required}"`);
     }
   }
-  return { request, contract, availableChecks: new Set(availableChecks), checkGroups: groups, visibleTestsDir };
+  const singleFile = path.join(dir, "single-model.json");
+  const single = SingleModelSetup.safeParse(JSON.parse(await readFile(singleFile, "utf8")));
+  if (!single.success) throw new Error(`Invalid ${singleFile}:\n${single.error.message}`);
+
+  return { request, contract, availableChecks: new Set(availableChecks), checkGroups: groups, visibleTestsDir, singleModel: single.data };
 }
 
 /**

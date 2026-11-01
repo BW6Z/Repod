@@ -34,7 +34,7 @@ import {
   type PlannedTask,
   type ReviewFinding,
 } from "./schemas.ts";
-import type { RunReport, TaskOutcome } from "./state.ts";
+import { COST_PHASES, type CostPhase, type RunReport, type TaskOutcome } from "./state.ts";
 
 /** The gateway as the pipeline sees it; tests pass a scripted fake. */
 export interface ModelCaller {
@@ -78,6 +78,12 @@ export interface PipelineOptions {
   remainingBudgetUsd: number; // for the plan's budget warning
   hooks: PipelineHooks;
   runCheck?: (spec: CheckSpec) => Promise<CheckResult>; // injectable for tests
+  // Experiment arm A: no coordinator. This one task is the whole plan and
+  // runs on the model it names. Failed attempts are repaired without triage
+  // (no guidance) until the run's rework limit; there is no review and no
+  // closing summary. Everything else (checks, write scope, limits, freeze,
+  // holdout) is the same as in a coordinated run.
+  singleModelTask?: PlannedTask;
 }
 
 /**
@@ -120,8 +126,8 @@ class Run {
   private stopReason: string | null = null;
   private reworks = 0;
   private callCounter = 0;
-  private costUsd = 0;
-  private costKnown = true;
+  // null once any call in the phase had an unknown cost.
+  private readonly phaseCost: Record<CostPhase, number | null> = { coordination: 0, execution: 0, rework: 0, review: 0 };
 
   constructor(options: PipelineOptions) {
     this.o = options;
@@ -129,7 +135,9 @@ class Run {
   }
 
   async execute(): Promise<RunReport> {
+    const single = this.o.singleModelTask ?? null;
     const report: RunReport = {
+      mode: single ? "single-model" : "coordinated",
       status: "incomplete",
       plan: null,
       tasks: [],
@@ -141,21 +149,24 @@ class Run {
       problems: this.problems,
       summary: null,
       costUsd: null,
+      costByPhase: this.phaseCost,
     };
     await this.o.ledger.append({ type: "run_started", preset: this.o.preset.name, request: this.o.request });
 
     try {
       const knownFiles = await listFiles(this.o.workspace.root);
       const repoSummary = renderRepoSummary(await summarizeRepo(this.o.workspace.root));
-      report.plan = await this.planAndApprove(repoSummary, new Set(knownFiles));
+      report.plan = single
+        ? this.singleModelPlan(single, new Set(knownFiles))
+        : await this.planAndApprove(repoSummary, new Set(knownFiles));
 
       if (report.plan) {
         report.tasks = await this.executeTasks(report.plan);
-        report.findings = await this.review(report.plan, report.tasks);
+        if (!single) report.findings = await this.review(report.plan, report.tasks);
         if (!this.stopReason && report.tasks.every((t) => t.status === "passed")) {
           await this.freeze(report);
         }
-        report.summary = await this.summarize(report);
+        if (!single) report.summary = await this.summarize(report);
       }
     } catch (error) {
       // Ledger faults and other unexpected errors end the run; the report
@@ -174,7 +185,8 @@ class Run {
       .filter((g) => !report.plan?.some((t) => t.check_groups.includes(g.name) && passed.has(t.id)))
       .map((g) => g.name);
     report.status = report.plan !== null && this.problems.length === 0 ? "completed" : "incomplete";
-    report.costUsd = this.costKnown ? this.costUsd : null;
+    const costs = COST_PHASES.map((phase) => this.phaseCost[phase]);
+    report.costUsd = costs.includes(null) ? null : costs.reduce<number>((sum, cost) => sum + cost!, 0);
 
     await this.o.ledger
       .append({ type: "run_finished", status: report.status, summary: report.summary?.message ?? null })
@@ -189,6 +201,7 @@ class Run {
   // ---- model calls -------------------------------------------------------
 
   private async callModel<T>(
+    phase: CostPhase,
     role: Role,
     model: string,
     prompt: PromptKind,
@@ -209,14 +222,14 @@ class Run {
       taskId,
       attemptId: `${taskId ?? "run"}-${prompt}-${++this.callCounter}`,
     });
-    if (result.costUsd === null) this.costKnown = false;
-    else this.costUsd += result.costUsd;
+    const spent = this.phaseCost[phase];
+    this.phaseCost[phase] = spent === null || result.costUsd === null ? null : spent + result.costUsd;
     if (!result.ok && RUN_STOPPING.has(result.failure)) this.stop(`${prompt} call failed (${result.failure}): ${result.detail}`);
     return result;
   }
 
-  private callCoordinator<T>(prompt: PromptKind, schema: ZodType<T>, schemaName: string, input: string) {
-    return this.callModel("coordinator", this.o.preset.coordinator, prompt, schema, schemaName, input, null);
+  private callCoordinator<T>(phase: CostPhase, prompt: PromptKind, schema: ZodType<T>, schemaName: string, input: string) {
+    return this.callModel(phase, "coordinator", this.o.preset.coordinator, prompt, schema, schemaName, input, null);
   }
 
   // ---- 2 and 3: plan and approve ------------------------------------------
@@ -255,7 +268,7 @@ class Run {
   }
 
   private async requestPlan(prompt: PromptKind, input: string, knownFiles: Set<string>, mustBePlan: boolean): Promise<PlanResponse | null> {
-    let result = await this.callCoordinator(prompt, PlanResponse, "plan_response", input);
+    let result = await this.callCoordinator("coordination", prompt, PlanResponse, "plan_response", input);
     if (!result.ok) {
       this.stop(`planning failed (${result.failure}): ${result.detail}`);
       return null;
@@ -266,7 +279,7 @@ class Run {
     if (errors.length > 0) {
       // One chance to fix a rejected plan, then the run stops.
       const fixInput = `${input}\n\n# Your previous reply was rejected\n${JSON.stringify(result.data)}\n\nProblems:\n${errors.map((e) => `- ${e.taskId ?? "plan"}: ${e.message}`).join("\n")}`;
-      result = await this.callCoordinator(prompt, PlanResponse, "plan_response", fixInput);
+      result = await this.callCoordinator("coordination", prompt, PlanResponse, "plan_response", fixInput);
       if (!result.ok) {
         this.stop(`planning failed (${result.failure}): ${result.detail}`);
         return null;
@@ -279,6 +292,21 @@ class Run {
       }
     }
     return result.data;
+  }
+
+  /**
+   * Arm A's fixed plan. It comes from trusted configuration, but it is
+   * validated like any plan, so a mistake in it (a protected write, an
+   * unknown model) stops the run instead of running something else.
+   */
+  private singleModelPlan(task: PlannedTask, knownFiles: Set<string>): PlannedTask[] | null {
+    const plan: PlanResponse = { kind: "plan", message: "", questions: [], tasks: [task] };
+    const errors = this.validate(plan, knownFiles).filter((i) => i.severity === "error");
+    if (errors.length > 0) {
+      this.stop(`the single-model task is invalid: ${errors.map((e) => e.message).join("; ")}`);
+      return null;
+    }
+    return plan.tasks;
   }
 
   private async planAndApprove(repoSummary: string, knownFiles: Set<string>): Promise<PlannedTask[] | null> {
@@ -420,6 +448,14 @@ class Run {
       // A retryable failure: the program decides what is allowed, Meta picks.
       this.reworks++;
       if (this.reworks > limits.maxTotalReworks) return finish("failed", `rework limit reached: ${attempt.reason}`);
+      if (this.o.singleModelTask) {
+        // No coordinator to triage: the one task keeps repairing, without
+        // guidance, until the run-wide rework limit above ends it. That
+        // limit bounds a coordinated run's total repairs in the same way.
+        previous = { model, diff: await diffAgainstBaseline(this.o.workspace), failure: attempt.evidence };
+        guidance = null;
+        continue;
+      }
       const maxForTier = this.tierOf(model) === "strong" ? limits.strongAttemptsPerTask : limits.cheapAttemptsPerTask;
       const canRepair = tierAttempts < maxForTier;
       const canEscalate = !escalated && limits.maxEscalationsPerTask > 0 && this.tierOf(model) !== "strong";
@@ -459,7 +495,7 @@ class Run {
       `# Failure\n${attempt.reason}\n\n${attempt.evidence.slice(0, MAX_EVIDENCE_CHARS)}`,
       `# Allowed decisions\n${allowed}`,
     ].join("\n\n");
-    const result = await this.callCoordinator("triage", TriageDecision, "triage_decision", input);
+    const result = await this.callCoordinator("rework", "triage", TriageDecision, "triage_decision", input);
     if (result.ok) return result.data;
     // Without a usable triage reply the program falls back to its own rule:
     // repair while attempts remain, then escalate.
@@ -499,7 +535,8 @@ class Run {
       const needFilesAllowed = !needFilesUsed && limits.maxNeedFilesRequests > 0;
       const { input, contextVersion } = buildExecutorInput({ task, files, contract, previous, guidance, needFilesAllowed });
 
-      const result = await this.callModel("executor", model, "execute", ExecutorOutput, "executor_output", input, task.id);
+      const phase = previous === null ? "execution" : "rework";
+      const result = await this.callModel(phase, "executor", model, "execute", ExecutorOutput, "executor_output", input, task.id);
       if (!result.ok) {
         if (RUN_STOPPING.has(result.failure)) return { kind: "stop-run", reason: `executor call failed (${result.failure}): ${result.detail}` };
         if (result.failure === "format") return { kind: "retry", reason: "executor output did not match the schema", evidence: result.detail };
@@ -570,7 +607,7 @@ class Run {
         `# Files this task changed\n${task.write_files.join(", ")}`,
         `# Diff against the baseline\n\`\`\`diff\n${diff}\n\`\`\``,
       ].join("\n\n");
-      const result = await this.callModel("reviewer", this.o.preset.roles.review, "review", ReviewOutput, "review_output", input, task.id);
+      const result = await this.callModel("review", "reviewer", this.o.preset.roles.review, "review", ReviewOutput, "review_output", input, task.id);
       if (!result.ok) {
         this.problems.push(`${task.id}: required review could not run (${result.failure})`);
         if (this.stopReason) break;
@@ -622,7 +659,7 @@ class Run {
       tasks: report.tasks.map((t) => ({ id: t.taskId, status: t.status, reason: t.reason })),
       problems: [...(this.stopReason ? [`run stopped: ${this.stopReason}`] : []), ...this.problems],
     });
-    const result = await this.callCoordinator("summarize", RunSummary, "run_summary", input);
+    const result = await this.callCoordinator("coordination", "summarize", RunSummary, "run_summary", input);
     return result.ok ? result.data : null;
   }
 }

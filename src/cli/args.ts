@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { ARMS, type Arm } from "../eval/experiment.ts";
 
 export const COMMANDS = ["check-config", "spend", "probe", "run", "experiment"] as const;
 export type Command = (typeof COMMANDS)[number];
@@ -7,7 +8,10 @@ export interface CommandOptions {
   model: string | null; // probe
   preset: string | null; // run
   experiment: boolean; // run: default answers and automatic plan approval
-  holdout: string | null; // run: folder with holdout tests
+  holdout: string | null; // run, experiment: folder with holdout tests
+  arms: Arm[]; // experiment: arms in run order; default A, C (B only when asked)
+  runs: number; // experiment: runs per arm
+  label: string | null; // experiment: "debug", "formal", ...
 }
 
 export type ParsedCommand = ({ ok: true; command: Command | null } & CommandOptions) | { ok: false; error: string };
@@ -18,8 +22,10 @@ const ALLOWED: Record<Command, ReadonlyArray<keyof CommandOptions>> = {
   spend: [],
   probe: ["model"],
   run: ["preset", "experiment", "holdout"],
-  experiment: [],
+  experiment: ["arms", "runs", "label", "holdout"],
 };
+
+const LABEL = /^[a-z0-9-]{1,20}$/; // becomes part of run ids and file names
 
 /**
  * Parses CLI arguments strictly. Anything unexpected is an error rather than
@@ -38,6 +44,9 @@ export function parseCommand(argv: string[]): ParsedCommand {
         preset: { type: "string" },
         experiment: { type: "boolean" },
         holdout: { type: "string" },
+        arms: { type: "string" },
+        runs: { type: "string" },
+        label: { type: "string" },
       },
     });
   } catch (error) {
@@ -58,6 +67,22 @@ export function parseCommand(argv: string[]): ParsedCommand {
   if (misplaced) {
     return { ok: false, error: `--${misplaced} is not valid${command ? ` with ${command}` : " without a command"}` };
   }
+
+  // An experiment spends real money on every run, so a malformed value is an
+  // error rather than a guess.
+  const arms = values.arms === undefined ? ["A", "C"] : values.arms.split(",").map((a) => a.trim().toUpperCase());
+  const badArm = arms.find((a) => !(ARMS as readonly string[]).includes(a));
+  if (badArm !== undefined) return { ok: false, error: `Unknown arm "${badArm}"; use ${ARMS.join(", ")}` };
+  if (new Set(arms).size !== arms.length) return { ok: false, error: "--arms lists an arm twice" };
+  const runs = values.runs === undefined ? 1 : Number(values.runs);
+  if (!Number.isInteger(runs) || runs < 1 || runs > 10) return { ok: false, error: "--runs must be a whole number from 1 to 10" };
+  if (values.label !== undefined && !LABEL.test(values.label)) {
+    return { ok: false, error: "--label may only use lower-case letters, digits and '-' (at most 20)" };
+  }
+  if (command === "experiment" && values.holdout === undefined) {
+    return { ok: false, error: "experiment needs --holdout <dir>: the holdout pass rate is its main result" };
+  }
+
   return {
     ok: true,
     command: command as Command | null,
@@ -65,5 +90,8 @@ export function parseCommand(argv: string[]): ParsedCommand {
     preset: values.preset ?? null,
     experiment: values.experiment ?? false,
     holdout: values.holdout ?? null,
+    arms: arms as Arm[],
+    runs,
+    label: values.label ?? null,
   };
 }

@@ -1,7 +1,8 @@
 # Evaluation
 
 Protocol for checking whether Repod's routing saves cost without lowering
-quality. Nothing here has been run yet.
+quality. The runner is implemented (`npm run repod -- experiment`) but has
+not been run with real models yet.
 
 ## Arms
 
@@ -15,6 +16,29 @@ All arms share the baseline commit, request text, holdout tests and budget
 cap. Clarifying questions use their default answers and plan revision is
 skipped, so runs are repeatable; any human input is counted.
 
+Arm A in detail (`singleModelTask` in `src/eval/experiment.ts`): one task
+covering the whole request, run on the saving preset's critical model (the
+model arm C escalates to), with every baseline file as context, every check
+group's visible tests, and the write scope in `eval/demo/single-model.json`
+(only files SPEC.md and the contract name). There is no coordinator, so
+there is no planning, triage, review or closing summary; a failed attempt is
+repaired with the previous diff and failure evidence until the run-wide
+rework limit (`maxTotalReworks`), the same limit that bounds a coordinated
+run's repairs. Checks, file limits, freeze and holdout are identical.
+
+## Running
+
+```bash
+npm run repod -- experiment --holdout <dir> --arms A,C --runs 1 --label debug
+npm run repod -- experiment --holdout <dir> --arms A,C --runs 3 --label formal
+```
+
+Runs go in rounds (A, C, A, C, ...), so drift during the day affects every
+arm alike. Every run re-reads recorded spend; once the cumulative budget
+refuses a call the experiment stops and says so. Each run's report stays in
+`runs/<runId>/report.json`; the summary goes to
+`runs/experiments/<experimentId>.json`.
+
 ## Procedure
 
 1. One debug run per arm, then freeze the protocol.
@@ -25,7 +49,19 @@ skipped, so runs are repeatable; any human input is counted.
 
 Holdout pass rate, standardized total cost split into coordination,
 execution, review and rework, call count, escalations, wall time, human
-interventions. Results report median and range; three runs are exploratory
+interventions.
+
+How they are computed:
+
+- Holdout pass rate: passed / run from the holdout test summary. Holdout
+  tests run only on a frozen result, so a run that did not complete every
+  task scores 0 and is marked "holdout not run".
+- Cost by phase (list prices): coordination is planning, plan revision and
+  the closing summary; execution is each task's first attempt; rework is
+  later attempts and the triage before them; review is reviewer calls.
+- Calls: requests in the run's ledger, including retries and format repairs.
+- Human interventions: none by construction; experiment runs use default
+  answers and approve the plan automatically. Results report median and range; three runs are exploratory
 evidence only. Running time of the sample's 20,000-task cases is measured
 and reported separately; it is not a pass condition.
 
@@ -38,6 +74,7 @@ Trusted input for every run, written before any model sees the repository:
 | `request.md` | The user request given to Meta |
 | `contract.md` | Interface conventions shown to every executor |
 | `checks.json` | Which check kinds exist, and the visible test groups with their order (`planner`, then `cli`, then `docs`) |
+| `single-model.json` | Arm A's one task: title, acceptance criteria and write scope |
 | `visible/*.test.ts` | The groups' tests. Each is copied into the run workspace's `test/` only when the task that owns its group runs |
 
 The rules all tests check are in `sample-repo/SPEC.md`. Visible tests cover

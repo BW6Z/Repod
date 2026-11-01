@@ -34,6 +34,7 @@ export interface CheckResult {
   // this workspace again: something may still be running in it.
   processExited: boolean;
   testsRun: number | null;
+  testsPassed: number | null; // from the same summary; null when no tests were expected or none was found
   output: string; // stdout and stderr interleaved, truncated to maxOutputBytes
   outputTruncated: boolean;
   durationMs: number;
@@ -57,14 +58,14 @@ export function childEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJ
 }
 
 /**
- * Reads the executed-test count from node:test output (TAP or spec reporter).
- * The last summary line wins: code under test can print "tests N" itself, and
- * the TAP reporter turns such console output into "# tests N" comments that
- * appear before the real summary.
+ * Reads a count from the node:test summary (TAP or spec reporter): "tests"
+ * (executed) or "pass". The last summary line wins: code under test can
+ * print "tests N" itself, and the TAP reporter turns such console output
+ * into "# tests N" comments that appear before the real summary.
  */
-export function parseTestCount(output: string): number | null {
+export function parseTestCount(output: string, line: "tests" | "pass" = "tests"): number | null {
   let count: number | null = null;
-  for (const match of output.matchAll(/^(?:#|ℹ) tests (\d+)\s*$/gm)) count = Number(match[1]);
+  for (const match of output.matchAll(new RegExp(`^(?:#|ℹ) ${line} (\\d+)\\s*$`, "gm"))) count = Number(match[1]);
   return count;
 }
 
@@ -154,7 +155,8 @@ export function runCheck(spec: CheckSpec, options: RunCheckOptions = {}): Promis
       if (spawnError) output += `\n[spawn error] ${spawnError.message}`;
       for (const note of notes) output += `\n[${note}]`;
 
-      const testsRun = spec.expectTests ? (parseTestCount(tail.toString("utf8")) ?? parseTestCount(output)) : null;
+      const count = (line: "tests" | "pass") => (spec.expectTests ? (parseTestCount(tail.toString("utf8"), line) ?? parseTestCount(output, line)) : null);
+      const testsRun = count("tests");
       let failure: CheckFailure | null = null;
       if (spawnError) failure = "spawn_error";
       else if (timedOut) failure = "timeout";
@@ -169,6 +171,7 @@ export function runCheck(spec: CheckSpec, options: RunCheckOptions = {}): Promis
         timedOut,
         processExited,
         testsRun,
+        testsPassed: count("pass"),
         output,
         outputTruncated: truncated,
         durationMs: Date.now() - started,

@@ -81,7 +81,8 @@ jobs:
           missing=0
           for f in README.md .env.example .gitignore package-lock.json \
                    config/limits.json config/pricing.json docs/compliance.md \
-                   sample-repo/SPEC.md eval/demo/request.md eval/demo/checks.json; do
+                   sample-repo/SPEC.md eval/demo/request.md eval/demo/checks.json \
+                   eval/demo/single-model.json; do
             if [ ! -f "$f" ]; then
               echo "::error::Required file missing: $f"
               missing=1

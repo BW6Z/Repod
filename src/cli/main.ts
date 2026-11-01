@@ -4,6 +4,7 @@ import path from "node:path";
 import { parseEnv } from "node:util";
 import { z } from "zod";
 import { loadConfig } from "../config/load.ts";
+import { renderSummary, runExperiment } from "../eval/experiment.ts";
 import { loadDemoKit, prepareHoldout } from "../eval/kit.ts";
 import { MetaAdapter } from "../gateway/adapters/meta.ts";
 import { ModelGateway } from "../gateway/gateway.ts";
@@ -31,7 +32,10 @@ Commands:
                         Run the demo request on a copy of sample-repo (costs real money).
                         --experiment uses default answers and approves the plan automatically.
                         --holdout runs the holdout tests in <dir> once after freezing.
-  experiment            Run the comparison arms (not implemented yet)
+  experiment --holdout <dir> [--arms A,C] [--runs <n>] [--label <name>]
+                        Run the comparison arms on the demo request (costs real money).
+                        Arms: A (one strong model), B (quality preset), C (saving preset).
+                        Default: arms A,C, 1 run each, label "debug".
 `;
 
 /**
@@ -188,6 +192,55 @@ async function run(options: CommandOptions): Promise<number> {
   });
 }
 
+/**
+ * Runs the comparison arms of eval/README.md: rounds of fresh runs on copies
+ * of sample-repo, each frozen and holdout-tested once, then a summary with
+ * median and range per arm. Per-run reports stay in runs/<runId>/; the
+ * summary goes to runs/experiments/<experimentId>.json.
+ */
+async function experiment(options: CommandOptions): Promise<number> {
+  const config = await loadConfig(configDir);
+  const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
+  const { limits } = config;
+
+  // Created before any folder, so a missing key leaves nothing behind.
+  const adapter = new MetaAdapter({ apiKey: readSecrets().modelApiKey });
+  // The lock is held for the whole experiment; each run re-reads past spend.
+  return withPaidRunLock("experiment", async () => {
+    const label = options.label ?? "debug";
+    const experimentId = `exp-${label}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const result = await runExperiment({
+      experimentId,
+      label,
+      arms: options.arms,
+      runsPerArm: options.runs,
+      config,
+      kit,
+      baselineDir: path.join(repoRoot, "sample-repo"),
+      runsDir,
+      holdoutDir: path.resolve(options.holdout!),
+      tscEntry: path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"),
+      spentUsd: () => totalSpentUsd(runsDir),
+      gatewayFor: (preset, ledger, spentBeforeUsd) =>
+        new ModelGateway({
+          preset,
+          pricing: config.pricing,
+          limits,
+          adapters: [adapter],
+          ledger,
+          spend: new SpendTracker(limits.budgetUsd, limits.totalBudgetUsd, spentBeforeUsd),
+        }),
+      log: (line) => console.log(line),
+    });
+
+    const file = path.join(runsDir, "experiments", `${experimentId}.json`);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify(result, null, 2));
+    console.log(`\n${renderSummary(result)}\n\nResults: ${path.relative(repoRoot, file)}`);
+    return result.stoppedEarly ? 1 : 0;
+  });
+}
+
 function printReport(report: RunReport, reportFile: string): void {
   console.log(`\nRun ${report.status}.`);
   for (const task of report.tasks) {
@@ -220,12 +273,7 @@ async function main(argv: string[]): Promise<number> {
     case "run":
       return run(parsed);
     case "experiment":
-      // TODO: Add the experiment runner (arms A, C and optionally B from
-      // eval/README.md), including a single-model mode for arm A. Returning a
-      // distinct exit code keeps scripts from treating this placeholder as
-      // success.
-      console.error(`"${parsed.command}" is not implemented yet.`);
-      return 2;
+      return experiment(parsed);
     case null:
       console.log(USAGE);
       return 0;

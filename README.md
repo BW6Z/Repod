@@ -37,13 +37,12 @@ real models. Do not treat planned items as working features.
 | System prompts (`src/orchestrator/prompts.ts`) | First versions; to be tuned against real model behavior |
 | Write scope per task, pre-write freshness check, tainted workspaces (`src/workspace`) | Implemented, tested |
 | CLI `run`: the demo request on a copy of the sample repo, interactive or `--experiment` | Implemented; **not yet run with real models** |
-| CLI `experiment` (comparison arms) | Planned |
+| CLI `experiment`: arms A (one strong model, no coordinator), B and C in rounds, with per-run reports and a median/range summary (`src/eval/experiment.ts`) | Implemented, tested with a scripted gateway and real checks; **not yet run with real models** |
 | Run workspace, path allowlist, diff, hashing (`src/workspace`) | Implemented, tested (Windows paths with spaces, junction escapes, links into protected folders) |
 | Check runner (`src/verifier`) | Implemented, tested (timeouts kill the process tree; API keys withheld) |
 | Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
 | Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
 | Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
-| Experiment runner | Planned |
 | Server and web UI | Planned |
 
 ## Requirements
@@ -76,6 +75,8 @@ npm run repod -- probe           # one tiny live request; costs real money
 npm run repod -- probe --model muse-wonder-1.0
 npm run repod -- run             # the demo request, interactive; costs real money
 npm run repod -- run --experiment --holdout <dir>
+npm run repod -- experiment --holdout <dir>                    # arms A and C, 1 run each ("debug")
+npm run repod -- experiment --holdout <dir> --runs 3 --label formal
 ```
 
 `run` copies `sample-repo/` into `runs/<runId>/workspace`, gives Meta the
@@ -84,6 +85,14 @@ and approve the plan (or send it back once). `--experiment` uses default
 answers and approves automatically; `--preset quality` switches presets;
 `--holdout <dir>` runs the holdout tests in `<dir>` once after the result is
 frozen. The report is written to `runs/<runId>/report.json`.
+
+`experiment` runs the comparison arms of `eval/README.md` (`--arms A,C` by
+default; add `B` for the quality preset) for `--runs` rounds, each run on a
+fresh copy with default answers and automatic approval. Each run keeps its
+own report; the summary (holdout pass rate, cost by phase, calls,
+escalations, wall time; median and range per arm) is written to
+`runs/experiments/<experimentId>.json`. It stops early once the cumulative
+budget refuses a call.
 
 Note there is only one `--` (it tells npm where its own options end). The CLI
 rejects unknown commands, unknown options and stray arguments instead of

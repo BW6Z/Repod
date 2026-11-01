@@ -1,0 +1,9 @@
+{
+  "title": "Complete the request",
+  "acceptance": [
+    "the type check passes",
+    "the visible tests pass",
+    "the behavior follows SPEC.md and the interface contract"
+  ],
+  "writeFiles": ["src/planner.ts", "src/index.ts", "src/cli.ts", "examples/basic.ts", "README.md", "CHANGELOG.md"]
+}

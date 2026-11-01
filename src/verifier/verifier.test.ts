@@ -151,5 +151,7 @@ describe("helpers", () => {
     assert.equal(parseTestCount("ℹ tests 7\nℹ pass 7\n"), 7);
     assert.equal(parseTestCount("# tests 99\nok 1\n# tests 1\n"), 1); // last summary wins
     assert.equal(parseTestCount("no summary"), null);
+    assert.equal(parseTestCount("# tests 5\n# pass 3\n# fail 2\n", "pass"), 3);
+    assert.equal(parseTestCount("ℹ tests 7\nℹ pass 7\n", "pass"), 7);
   });
 });

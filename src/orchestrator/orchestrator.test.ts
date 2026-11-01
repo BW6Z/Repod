@@ -215,6 +215,21 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.match(second, /guidance for repair/);
   });
 
+  test("cost is split into coordination, first attempts, rework and review", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1"))],
+      executor_output: [writes({ "src/math.ts": BROKEN }), writes({ "src/math.ts": WITH_MUL })],
+      triage_decision: [triage("repair")],
+      run_summary: [summary],
+    });
+    const { report } = await run(gateway);
+    // The scripted gateway charges $0.001 per successful call.
+    const rounded = Object.fromEntries(Object.entries(report.costByPhase).map(([phase, cost]) => [phase, cost?.toFixed(3)]));
+    assert.deepEqual(rounded, { coordination: "0.002", execution: "0.001", rework: "0.002", review: "0.000" });
+    assert.equal(report.costUsd?.toFixed(3), "0.005");
+    assert.equal(report.mode, "coordinated");
+  });
+
   test("after the cheap model's attempts, the task escalates once to the critical model", async () => {
     const gateway = new ScriptedGateway({
       plan_response: [plan(task("T1"))],
@@ -290,7 +305,7 @@ describe("runPipeline: failures, repair and escalation", () => {
   test("a check process that cannot be stopped taints the workspace and stops the run", async () => {
     const stuck: CheckResult = {
       name: "visible-tests", passed: false, failure: "timeout", exitCode: null, timedOut: true, processExited: false,
-      testsRun: null, output: "", outputTruncated: false, durationMs: 1,
+      testsRun: null, testsPassed: null, output: "", outputTruncated: false, durationMs: 1,
     };
     const gateway = new ScriptedGateway({
       plan_response: [plan(task("T1"), task("T2", { write_files: ["src/extra.ts"] }))],
@@ -315,6 +330,46 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.equal(report.tasks[1]?.status, "skipped");
     assert.equal(gateway.calls("triage_decision").length, 0);
     assert.equal(gateway.calls("run_summary").length, 0, "no further paid call once the budget is exhausted");
+  });
+});
+
+describe("runPipeline: single-model mode (experiment arm A)", () => {
+  const solo = (overrides: Partial<PlannedTask> = {}) =>
+    task("A1", { complexity: "complex", impact: "high", model: "muse-wonder-1.0", ...overrides });
+
+  test("runs the one task with no coordinator calls, then freezes", async () => {
+    const gateway = new ScriptedGateway({ executor_output: [writes({ "src/math.ts": WITH_MUL })] });
+    const { report } = await run(gateway, { singleModelTask: solo() });
+
+    assert.equal(report.mode, "single-model");
+    assert.equal(report.status, "completed", report.problems.join("\n"));
+    assert.deepEqual(gateway.requests.map((r) => `${r.role}:${r.model}`), ["executor:muse-wonder-1.0"]);
+    assert.ok(report.manifest, "a completed single-model run is frozen like any other");
+    assert.equal(report.summary, null);
+    assert.equal(report.costByPhase.coordination, 0);
+  });
+
+  test("failed attempts are repaired without triage until the run's rework limit", async () => {
+    const reworks = config.limits.maxTotalReworks;
+    const broken = Array.from({ length: reworks + 1 }, () => writes({ "src/math.ts": BROKEN }));
+    const gateway = new ScriptedGateway({ executor_output: broken });
+    const { report } = await run(gateway, { singleModelTask: solo() });
+
+    assert.equal(report.tasks[0]?.status, "failed");
+    assert.match(report.tasks[0]?.reason ?? "", /rework limit reached/);
+    assert.equal(report.tasks[0]?.attempts, reworks + 1);
+    assert.equal(report.tasks[0]?.escalated, false);
+    assert.equal(gateway.calls("triage_decision").length, 0);
+    assert.match(gateway.calls("executor_output")[1]?.input ?? "", /## Previous attempt/);
+    assert.doesNotMatch(gateway.calls("executor_output")[1]?.input ?? "", /Coordinator guidance/);
+  });
+
+  test("an invalid single-model task stops the run before any call", async () => {
+    const gateway = new ScriptedGateway({});
+    const { report } = await run(gateway, { singleModelTask: solo({ write_files: ["test/math.test.ts"] }) });
+    assert.equal(report.status, "incomplete");
+    assert.match(report.problems[0] ?? "", /single-model task is invalid: .*protected/);
+    assert.equal(gateway.requests.length, 0);
   });
 });
 
