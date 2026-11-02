@@ -66,6 +66,39 @@ const LedgerEventSchema = z.discriminatedUnion("type", [
     costUsd: Money.nullable(),
     durationMs: Count,
   }),
+  // The conversation between the user and Meta before execution: Meta's
+  // questions and proposed plans, the user's answers, approval or feedback.
+  z.object({
+    ...base,
+    type: z.literal("conversation"),
+    from: z.enum(["user", "meta"]),
+    kind: z.enum(["questions", "answers", "plan", "approval", "feedback"]),
+    text: z.string(),
+    questions: z.array(z.object({ id: z.string(), question: z.string(), why: z.string(), default: z.string() })).optional(),
+  }),
+  // The plan as approved, with the model each task will really run on, so
+  // a viewer can show it while the run is still going.
+  z.object({
+    ...base,
+    type: z.literal("plan_approved"),
+    message: z.string(),
+    tasks: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        type: z.string(),
+        complexity: z.string(),
+        impact: z.string(),
+        model: z.string(), // after the capability floor
+        requestedModel: z.string(), // the coordinator's choice
+        floorReason: z.string().nullable(),
+        reason: z.string(),
+        dependsOn: z.array(z.string()),
+        writeFiles: z.array(z.string()),
+        checkGroups: z.array(z.string()),
+      }),
+    ),
+  }),
   z.object({ ...base, type: z.literal("task_status"), taskId: z.string(), status: z.string(), detail: z.string().nullable() }),
   z.object({ ...base, type: z.literal("check_result"), taskId, check: z.string(), passed: z.boolean(), testsRun: Count.nullable() }),
   z.object({ ...base, type: z.literal("run_finished"), status: z.enum(["completed", "incomplete", "interrupted"]), summary: z.string().nullable() }),

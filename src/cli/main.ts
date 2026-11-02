@@ -12,8 +12,10 @@ import { MetaAdapter } from "../gateway/adapters/meta.ts";
 import { ModelGateway } from "../gateway/gateway.ts";
 import { LedgerWriter, ledgerPath } from "../gateway/ledger.ts";
 import { acquirePaidRunLock } from "../gateway/run-lock.ts";
+import { InteractiveSession } from "../server/session.ts";
+import { createViewServer } from "../server/view-server.ts";
 import { SpendTracker, totalSpentUsd } from "../gateway/spend.ts";
-import { experimentHooks, runPipeline } from "../orchestrator/orchestrator.ts";
+import { experimentHooks, runPipeline, type PipelineHooks } from "../orchestrator/orchestrator.ts";
 import type { RunReport } from "../orchestrator/state.ts";
 import { standardChecks } from "../verifier/verifier.ts";
 import { createRunWorkspace } from "../workspace/workspace.ts";
@@ -65,6 +67,10 @@ Commands:
                         Run the comparison arms on the demo request (costs real money).
                         Arms: A (one strong model), B (quality preset), C (saving preset).
                         Default: arms A,C, 1 run each, label "debug".
+  view [--port <n>] [--interactive [--holdout <dir>]]
+                        Open the run viewer on http://127.0.0.1:<port> (default 4173).
+                        Read-only and free by default. --interactive lets the page start
+                        the demo run and hold the conversation with Meta (costs real money).
 `;
 
 // Providers this CLI can call: it constructs only the Meta adapter.
@@ -113,7 +119,7 @@ async function spend(): Promise<number> {
  * can be spending against the same snapshot; the lock is released when the
  * command ends, also on errors.
  */
-async function withPaidRunLock(command: string, body: (spentBeforeUsd: number) => Promise<number>): Promise<number> {
+async function withPaidRunLock<T>(command: string, body: (spentBeforeUsd: number) => Promise<T>): Promise<T> {
   const release = await acquirePaidRunLock(runsDir, command);
   try {
     // Throws on a corrupt ledger: no paid call while past spend is unknown.
@@ -179,8 +185,33 @@ async function probe(model: string | null): Promise<number> {
  * judge every attempt, and the report is written to runs/<runId>/report.json.
  */
 async function run(options: CommandOptions): Promise<number> {
+  if (!options.holdout) console.warn("No --holdout folder given: holdout tests will not run.");
+  const { report, reportFile } = await runDemo({
+    preset: options.preset,
+    holdout: options.holdout,
+    hooks: options.experiment ? experimentHooks : terminalHooks(),
+    command: "run",
+  });
+  printReport(report, path.relative(repoRoot, reportFile));
+  return report.status === "completed" ? 0 : 1;
+}
+
+/**
+ * One paid run of the demo request, shared by `run` (terminal conversation)
+ * and the run viewer's page (conversation in the browser). Everything that
+ * can fail without spending (unknown preset, missing adapter or key, a lock
+ * held by another paid command) fails before the run starts; onStarted then
+ * receives the run id as soon as its folder exists.
+ */
+async function runDemo(o: {
+  preset: string | null;
+  holdout: string | null;
+  hooks: PipelineHooks;
+  command: string;
+  onStarted?: (runId: string) => void;
+}): Promise<{ report: RunReport; reportFile: string }> {
   const config = await loadConfig(configDir);
-  const presetName = options.preset ?? "saving";
+  const presetName = o.preset ?? "saving";
   const preset = config.presets.get(presetName);
   if (!preset) throw new Error(`Unknown preset "${presetName}"`);
   const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
@@ -188,14 +219,14 @@ async function run(options: CommandOptions): Promise<number> {
   requireAdapters(preset);
 
   const adapter = metaAdapter();
-  return withPaidRunLock("run", async (spentBefore) => {
+  return withPaidRunLock(o.command, async (spentBefore) => {
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     const workspace = await createRunWorkspace(path.join(repoRoot, "sample-repo"), runsDir, runId);
     const ledger = new LedgerWriter(workspace.ledgerFile, runId);
-    const holdoutChecks = options.holdout
-      ? await prepareHoldout(workspace.runDir, path.resolve(options.holdout), limits.checkTimeoutMs, limits.maxCheckOutputBytes)
+    const holdoutChecks = o.holdout
+      ? await prepareHoldout(workspace.runDir, path.resolve(o.holdout), limits.checkTimeoutMs, limits.maxCheckOutputBytes)
       : [];
-    if (!options.holdout) console.warn("No --holdout folder given: holdout tests will not run.");
+    o.onStarted?.(runId);
 
     const report = await runPipeline({
       request: kit.request,
@@ -224,13 +255,12 @@ async function run(options: CommandOptions): Promise<number> {
       visibleTestsDir: kit.visibleTestsDir,
       availableChecks: kit.availableChecks,
       remainingBudgetUsd: Math.min(limits.budgetUsd, limits.totalBudgetUsd - spentBefore),
-      hooks: options.experiment ? experimentHooks : terminalHooks(),
+      hooks: o.hooks,
     });
 
     const reportFile = path.join(workspace.runDir, "report.json");
     await writeFile(reportFile, JSON.stringify(report, null, 2));
-    printReport(report, path.relative(repoRoot, reportFile));
-    return report.status === "completed" ? 0 : 1;
+    return { report, reportFile };
   });
 }
 
@@ -310,6 +340,37 @@ async function experiment(options: CommandOptions): Promise<number> {
   });
 }
 
+/**
+ * Serves the run viewer (web/) and the run data in runs/ on this machine
+ * only. By default it reads files and nothing else, so it costs nothing and
+ * can run next to a paid command to follow it live. With --interactive the
+ * page can also start the demo run and answer Meta in place of the
+ * terminal; that run is the same paid run as `run`, under the same lock.
+ */
+async function view(options: CommandOptions): Promise<number> {
+  const config = await loadConfig(configDir);
+  let session: InteractiveSession | null = null;
+  if (options.interactive) {
+    const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
+    session = new InteractiveSession({
+      request: kit.request,
+      presets: [...config.presets.keys()],
+      start: (preset, hooks, onStarted) => runDemo({ preset, holdout: options.holdout, hooks, command: "view", onStarted }),
+    });
+    if (!options.holdout) console.warn("No --holdout folder given: runs started from the page will not run holdout tests.");
+  }
+  const server = createViewServer({ webDir: path.join(repoRoot, "web"), runsDir, config, session });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(options.port, "127.0.0.1", resolve);
+  });
+  console.log(`Run viewer: http://127.0.0.1:${options.port}/  (runs from ${path.relative(repoRoot, runsDir) || runsDir}; Ctrl+C to stop)`);
+  if (session) console.log("Interactive: the page can start paid runs of the demo request with your Meta key.");
+  // Keeps serving until the process is stopped.
+  await new Promise<never>(() => {});
+  return 0;
+}
+
 function printReport(report: RunReport, reportFile: string): void {
   console.log(`\nRun ${report.status}.`);
   for (const task of report.tasks) {
@@ -343,6 +404,8 @@ async function main(argv: string[]): Promise<number> {
       return run(parsed);
     case "experiment":
       return experiment(parsed);
+    case "view":
+      return view(parsed);
     case null:
       console.log(USAGE);
       return 0;

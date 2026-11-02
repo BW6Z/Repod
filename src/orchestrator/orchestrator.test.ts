@@ -144,9 +144,14 @@ describe("runPipeline: the main path", () => {
     assert.ok(report.manifest && "src/math.ts" in report.manifest);
     assert.equal(await readFile(path.join(workspace.root, "src", "math.ts"), "utf8"), WITH_MUL);
     assert.equal(report.summary?.message, "Done.");
-    const types = (await readEvents(ledger.file)).map((e) => e.type);
+    const events = await readEvents(ledger.file);
+    const types = events.map((e) => e.type);
     assert.equal(types[0], "run_started");
     assert.equal(types.at(-1), "run_finished");
+    // The approved plan is logged before any task runs, so a viewer can show it live.
+    assert.ok(types.indexOf("plan_approved") < types.indexOf("task_status"));
+    const approved = events.find((e) => e.type === "plan_approved");
+    assert.deepEqual(approved?.type === "plan_approved" && approved.tasks.map((t) => [t.id, t.model]), [["T1", "muse-spark-1.3"]]);
     // The coordinator is the Meta model; the executor is what the plan chose.
     assert.equal(gateway.calls("plan_response")[0]?.model, "muse-spark-1.3");
     assert.equal(gateway.calls("plan_response")[0]?.role, "coordinator");
@@ -197,6 +202,45 @@ describe("runPipeline: the main path", () => {
     assert.match(revise.system, /sent your plan back/);
     assert.match(revise.input, /Use the strong model\./);
     assert.equal(gateway.calls("executor_output")[0]?.model, "muse-wonder-1.0");
+  });
+
+  test("the conversation is logged, and the second review is told no revision is left", async () => {
+    const canRevise: boolean[] = [];
+    let reviews = 0;
+    const hooks: PipelineHooks = {
+      ...experimentHooks,
+      async reviewPlan(_plan, _decisions, _warnings, revisable) {
+        canRevise.push(revisable);
+        return ++reviews === 1 ? { approve: false, feedback: "Cheaper, please." } : { approve: true };
+      },
+    };
+    const questions = { kind: "questions", message: "One question.", tasks: [], questions: [{ id: "q1", question: "YAML?", why: "parser", default: "No" }] };
+    const gateway = new ScriptedGateway({
+      plan_response: [questions, plan(task("T1")), plan(task("T1"))],
+      executor_output: [writes({ "src/math.ts": WITH_MUL })],
+      run_summary: [summary],
+    });
+    const { ledger } = await run(gateway, { hooks });
+    assert.deepEqual(canRevise, [true, false]);
+    const turns = (await readEvents(ledger.file)).flatMap((e) => (e.type === "conversation" ? [[e.from, e.kind, e.text]] : []));
+    assert.deepEqual(turns, [
+      ["meta", "questions", "One question."],
+      ["user", "answers", "YAML? No"],
+      ["meta", "plan", "Plan."],
+      ["user", "feedback", "Cheaper, please."],
+      ["meta", "plan", "Plan."],
+      ["user", "approval", "Approved the plan."],
+    ]);
+  });
+
+  test("stopping at the plan ends the run without paying for a revision", async () => {
+    const hooks: PipelineHooks = { ...experimentHooks, reviewPlan: async () => ({ approve: false, feedback: null }) };
+    const gateway = new ScriptedGateway({ plan_response: [plan(task("T1"))], run_summary: [summary] });
+    const { report } = await run(gateway, { hooks });
+    assert.equal(report.status, "incomplete");
+    assert.match(report.problems[0] ?? "", /the user stopped the run at the plan/);
+    assert.equal(gateway.calls("plan_response").length, 1, "no revision was requested");
+    assert.equal(gateway.calls("executor_output").length, 0);
   });
 });
 

@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { ARMS, type Arm } from "../eval/experiment.ts";
 
-export const COMMANDS = ["check-config", "spend", "probe", "run", "experiment"] as const;
+export const COMMANDS = ["check-config", "spend", "probe", "run", "experiment", "view"] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export interface CommandOptions {
@@ -12,6 +12,8 @@ export interface CommandOptions {
   arms: Arm[]; // experiment: arms in run order; default A, C (B only when asked)
   runs: number; // experiment: runs per arm
   label: string | null; // experiment: "debug", "formal", ...
+  port: number; // view: local port of the run viewer
+  interactive: boolean; // view: the page may start paid runs and talk to Meta
 }
 
 export type ParsedCommand = ({ ok: true; command: Command | null } & CommandOptions) | { ok: false; error: string };
@@ -23,6 +25,7 @@ const ALLOWED: Record<Command, ReadonlyArray<keyof CommandOptions>> = {
   probe: ["model"],
   run: ["preset", "experiment", "holdout"],
   experiment: ["arms", "runs", "label", "holdout"],
+  view: ["port", "interactive", "holdout"],
 };
 
 const LABEL = /^[a-z0-9-]{1,20}$/; // becomes part of run ids and file names
@@ -47,6 +50,8 @@ export function parseCommand(argv: string[]): ParsedCommand {
         arms: { type: "string" },
         runs: { type: "string" },
         label: { type: "string" },
+        port: { type: "string" },
+        interactive: { type: "boolean" },
       },
     });
   } catch (error) {
@@ -79,6 +84,8 @@ export function parseCommand(argv: string[]): ParsedCommand {
   if (values.label !== undefined && !LABEL.test(values.label)) {
     return { ok: false, error: "--label may only use lower-case letters, digits and '-' (at most 20)" };
   }
+  const port = values.port === undefined ? 4173 : Number(values.port);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) return { ok: false, error: "--port must be a whole number from 1024 to 65535" };
   if (command === "experiment" && values.holdout === undefined) {
     return { ok: false, error: "experiment needs --holdout <dir>: the holdout pass rate is its main result" };
   }
@@ -93,5 +100,7 @@ export function parseCommand(argv: string[]): ParsedCommand {
     arms: arms as Arm[],
     runs,
     label: values.label ?? null,
+    port,
+    interactive: values.interactive ?? false,
   };
 }

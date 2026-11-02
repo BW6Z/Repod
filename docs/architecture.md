@@ -26,6 +26,12 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
   keys) and a timeout.
 - **Experiment runner** (`src/eval/experiment.ts`) calls the same pipeline
   once per run and collects metrics; it adds no model calls of its own.
+- **Run viewer** (`web/`, served by `src/server/view-server.ts`) reads the
+  ledgers, reports and experiment results; the `conversation` and
+  `plan_approved` ledger events let it show the conversation and the plan
+  while a run is still going. In interactive mode the page also starts the
+  demo run and answers Meta through the pipeline's hooks
+  (`src/server/session.ts`), in place of the terminal.
 
 ## Run flow (`runPipeline`)
 

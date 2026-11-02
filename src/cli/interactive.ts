@@ -28,7 +28,7 @@ export function terminalHooks(): PipelineHooks {
       return answers;
     },
 
-    async reviewPlan(plan, decisions, warnings) {
+    async reviewPlan(plan, decisions, warnings, canRevise) {
       console.log(`\nMeta: ${plan.message}\n`);
       plan.tasks.forEach((task, i) => {
         const decision = decisions[i];
@@ -41,7 +41,11 @@ export function terminalHooks(): PipelineHooks {
         if (task.depends_on.length) console.log(`    after: ${task.depends_on.join(", ")}`);
       });
       for (const warning of warnings) console.log(`warning: ${warning.message}`);
-      const answer = await ask("\nApprove this plan? Press Enter or type y to approve, or type feedback to send it back once: ");
+      const answer = await ask(
+        canRevise
+          ? "\nApprove this plan? Press Enter or type y to approve, or type feedback to send it back once: "
+          : "\nApprove the revised plan? Press Enter or type y to approve; anything else stops the run: ",
+      );
       return answer === "" || /^y(es)?$/i.test(answer) ? { approve: true } : { approve: false, feedback: answer };
     },
   };

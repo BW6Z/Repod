@@ -41,7 +41,8 @@ export interface ModelCaller {
   call<T>(request: ModelRequest<T>): Promise<ModelResult<T>>;
 }
 
-export type PlanReview = { approve: true } | { approve: false; feedback: string };
+// feedback null: stop the run here instead of asking for a revision.
+export type PlanReview = { approve: true } | { approve: false; feedback: string | null };
 
 /**
  * The only points where the user takes part. Everything before execution is
@@ -49,7 +50,9 @@ export type PlanReview = { approve: true } | { approve: false; feedback: string 
  */
 export interface PipelineHooks {
   answerQuestions(questions: ClarifyingQuestion[], message: string): Promise<Record<string, string>>;
-  reviewPlan(plan: PlanResponse, decisions: FloorDecision[], warnings: PlanIssue[]): Promise<PlanReview>;
+  // canRevise: whether sending the plan back is still possible; when false,
+  // anything but approval stops the run.
+  reviewPlan(plan: PlanResponse, decisions: FloorDecision[], warnings: PlanIssue[], canRevise: boolean): Promise<PlanReview>;
 }
 
 /** Experiment runs: default answers and automatic approval, so runs are repeatable. */
@@ -372,6 +375,7 @@ class Run {
       this.stop(`the single-model task is invalid: ${errors.map((e) => e.message).join("; ")}`);
       return null;
     }
+    await this.recordPlan("One model does the whole request (experiment arm A).", plan.tasks);
     return plan.tasks;
   }
 
@@ -382,7 +386,9 @@ class Run {
 
     let planInput = base;
     if (plan.kind === "questions") {
+      await this.say("meta", "questions", plan.message, plan.questions);
       const answers = await this.o.hooks.answerQuestions(plan.questions, plan.message);
+      await this.say("user", "answers", plan.questions.map((q) => `${q.question} ${answers[q.id] || q.default}`).join("\n"));
       const answered = plan.questions.map((q) => `- ${q.question}\n  Answer: ${answers[q.id] ?? q.default}`).join("\n");
       planInput = `${base}\n\n# Answers to your questions\n${answered}\n\nReturn kind "plan" now; do not ask more questions.`;
       plan = await this.requestPlan("plan", planInput, knownFiles, true);
@@ -392,9 +398,16 @@ class Run {
     const warnings = async (p: PlanResponse) => (await this.validate(p, knownFiles)).filter((i) => i.severity === "warning");
     const decisions = (p: PlanResponse) => p.tasks.map((t) => applyCapabilityFloor(t, this.o.preset));
 
-    let review = await this.o.hooks.reviewPlan(plan, decisions(plan), await warnings(plan));
+    const canRevise = this.o.config.limits.maxPlanRevisions >= 1;
+    await this.say("meta", "plan", plan.message);
+    let review = await this.o.hooks.reviewPlan(plan, decisions(plan), await warnings(plan), canRevise);
+    await this.sayReview(review);
     if (!review.approve) {
-      if (this.o.config.limits.maxPlanRevisions < 1) {
+      if (review.feedback === null) {
+        this.stop("the user stopped the run at the plan");
+        return null;
+      }
+      if (!canRevise) {
         this.stop("the plan was not approved");
         return null;
       }
@@ -403,13 +416,47 @@ class Run {
       if (!revised) return null;
       plan = revised;
       // The revised plan can only be approved; there is no second revision.
-      review = await this.o.hooks.reviewPlan(plan, decisions(plan), await warnings(plan));
+      await this.say("meta", "plan", plan.message);
+      review = await this.o.hooks.reviewPlan(plan, decisions(plan), await warnings(plan), false);
+      await this.sayReview(review);
       if (!review.approve) {
         this.stop("the revised plan was not approved");
         return null;
       }
     }
+    await this.recordPlan(plan.message, plan.tasks);
     return plan.tasks;
+  }
+
+  /** Logs one turn of the conversation before execution. */
+  private say(
+    from: "user" | "meta",
+    kind: "questions" | "answers" | "plan" | "approval" | "feedback",
+    text: string,
+    questions?: ClarifyingQuestion[],
+  ): Promise<void> {
+    return this.o.ledger.append({ type: "conversation", from, kind, text, ...(questions ? { questions } : {}) });
+  }
+
+  private sayReview(review: PlanReview): Promise<void> {
+    if (review.approve) return this.say("user", "approval", "Approved the plan.");
+    return this.say("user", "feedback", review.feedback ?? "Stopped the run.");
+  }
+
+  /** Logs the approved plan with the models the floor assigns. */
+  private recordPlan(message: string, tasks: PlannedTask[]): Promise<void> {
+    return this.o.ledger.append({
+      type: "plan_approved",
+      message,
+      tasks: tasks.map((t) => {
+        const floor = applyCapabilityFloor(t, this.o.preset);
+        return {
+          id: t.id, title: t.title, type: t.type, complexity: t.complexity, impact: t.impact,
+          model: floor.model, requestedModel: t.model, floorReason: floor.reason, reason: t.reason,
+          dependsOn: t.depends_on, writeFiles: t.write_files, checkGroups: t.check_groups,
+        };
+      }),
+    });
   }
 
   // ---- 4: execute -----------------------------------------------------------

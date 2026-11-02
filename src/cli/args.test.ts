@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseCommand } from "./args.ts";
 
-const defaults = { model: null, preset: null, experiment: false, holdout: null, arms: ["A", "C"], runs: 1, label: null };
+const defaults = { model: null, preset: null, experiment: false, holdout: null, arms: ["A", "C"], runs: 1, label: null, port: 4173, interactive: false };
 
 test("parses commands and their options", () => {
   assert.deepEqual(parseCommand([]), { ok: true, command: null, ...defaults });
@@ -43,4 +43,11 @@ test("experiment options are validated before anything is spent", () => {
   }
   assert.match(errorOf(["experiment", "--holdout", "h", "--label", "Bad Label"]) ?? "", /--label/);
   assert.equal(parseCommand(["run", "--arms", "A"]).ok, false);
+});
+
+test("view takes an optional port within the unprivileged range", () => {
+  assert.deepEqual(parseCommand(["view"]), { ok: true, command: "view", ...defaults });
+  assert.deepEqual(parseCommand(["view", "--port", "8080"]), { ok: true, command: "view", ...defaults, port: 8080 });
+  for (const port of ["80", "70000", "x", "1.5"]) assert.equal(parseCommand(["view", "--port", port]).ok, false, port);
+  assert.equal(parseCommand(["run", "--port", "8080"]).ok, false);
 });

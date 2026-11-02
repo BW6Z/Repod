@@ -43,7 +43,9 @@ real models. Do not treat planned items as working features.
 | Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
 | Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
 | Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
-| Server and web UI | Planned |
+| Run viewer: local page showing each run as one conversation with Meta (live while it runs), cost against one strong model from experiment results, and experiment results (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
+| Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented, tested with a fake Meta API; **not yet run with real models** |
+| Free-form requests on the page; static replay export | Planned |
 
 ## Requirements
 
@@ -77,6 +79,8 @@ npm run repod -- run             # the demo request, interactive; costs real mon
 npm run repod -- run --experiment --holdout <dir>
 npm run repod -- experiment --holdout <dir>                    # arms A and C, 1 run each ("debug"); <dir> needs expected-tests.json
 npm run repod -- experiment --holdout <dir> --runs 3 --label formal
+npm run repod -- view                                          # read-only run viewer on http://127.0.0.1:4173; free
+npm run repod -- view --interactive --holdout <dir>            # the page can start the demo run; costs real money
 ```
 
 `run` copies `sample-repo/` into `runs/<runId>/workspace`, gives Meta the
@@ -128,8 +132,8 @@ src/
   workspace/   isolated run copies, path allowlist, diffs
   verifier/    fixed checks run as child processes
   eval/        demo kit loader and holdout preparation
-  server/      planned read-only API
-web/           planned UI
+  server/      server for the run viewer (read-only unless --interactive)
+web/           run viewer page (plain HTML, CSS, JS)
 sample-repo/   demo baseline that runs modify (copies only); SPEC.md holds its rules
 eval/          experiment protocol; demo kit (eval/demo); holdout tests after the experiments
 docs/          architecture and compliance notes

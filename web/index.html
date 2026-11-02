@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Repod run viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar glass">
+    <div class="brand">Repod<span class="brand-sub">coordinated by Meta</span></div>
+    <nav class="tabs" aria-label="Views">
+      <button type="button" class="tab" data-view="run" aria-pressed="true">Runs</button>
+      <button type="button" class="tab" data-view="experiments" aria-pressed="false">Experiments</button>
+    </nav>
+    <label class="picker">
+      <span class="visually-hidden">Run</span>
+      <select id="run-picker"></select>
+    </label>
+    <div id="live" class="live" aria-live="polite"></div>
+  </header>
+  <main id="app" class="app" aria-live="polite"></main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
