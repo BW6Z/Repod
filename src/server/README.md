@@ -15,6 +15,11 @@
 
 See `web/README.md` for the data layout.
 
+`replay.ts` writes the same layout as static files for `npm run repod --
+export`: finished runs only, the session always disabled, absolute paths of
+this machine replaced with placeholders, and the holdout tests' output
+dropped from reports (their names would reveal the private tests).
+
 `session.ts` holds the interactive mode: one paid run of the demo request at
 a time, started through the CLI's own `runDemo`, with pipeline hooks that
 wait for the page instead of the terminal. Its actions (`POST api/start`,

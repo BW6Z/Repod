@@ -58,6 +58,7 @@ export interface ExperimentOptions {
    */
   fingerprint?: () => Promise<Record<string, string>>;
   sourceCommit?: string | null; // for the record; the fingerprint is what is checked
+  endpoint?: string | null; // origin of the model API every run calls
   /** Called with the results so far after every run, so a failure later loses nothing. */
   save?: (result: ExperimentResult) => Promise<void>;
 }
@@ -116,6 +117,7 @@ export interface ExperimentResult {
   finishedAt: string;
   baselineCommit: string | null;
   sourceCommit: string | null;
+  endpoint: string | null; // origin of the model API; a rehearsal against a fake API is not a result
   inputs: Record<string, string> | null; // the input fingerprint every run was checked against
   request: string;
   // Every run uses default answers and approves the plan automatically, so
@@ -234,6 +236,7 @@ export async function runExperiment(o: ExperimentOptions): Promise<ExperimentRes
     finishedAt: new Date().toISOString(),
     baselineCommit,
     sourceCommit: o.sourceCommit ?? null,
+    endpoint: o.endpoint ?? null,
     inputs,
     request: o.kit.request,
     humanInput: "none",
@@ -319,6 +322,7 @@ async function runOne(
     hooks: experimentHooks,
     ...(o.runCheck ? { runCheck: o.runCheck } : {}),
     ...(task ? { singleModelTask: task } : {}),
+    ...(o.endpoint ? { endpoint: o.endpoint } : {}),
   });
   const wallMs = Date.now() - started;
   await writeFile(path.join(workspace.runDir, "report.json"), JSON.stringify(report, null, 2));
@@ -365,7 +369,7 @@ export function renderSummary(result: ExperimentResult): string {
   const usd = (n: number) => `$${n.toFixed(4)}`;
   const secs = (n: number) => `${Math.round(n / 1000)}s`;
   const lines = [
-    `Experiment ${result.experimentId} (${result.label}); median (min-max)`,
+    `Experiment ${result.experimentId} (${result.label}); model API ${result.endpoint ?? "not recorded"}; median (min-max)`,
     "arm | runs | completed | holdout all passed | holdout pass rate | cost | wall time",
     ...result.arms.map((a) =>
       [

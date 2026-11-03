@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseCommand } from "./args.ts";
 
-const defaults = { model: null, preset: null, experiment: false, holdout: null, arms: ["A", "C"], runs: 1, label: null, port: 4173, interactive: false };
+const defaults = { model: null, preset: null, experiment: false, holdout: null, arms: ["A", "C"], runs: 1, label: null, port: 4173, interactive: false, out: null, include: [] };
 
 test("parses commands and their options", () => {
   assert.deepEqual(parseCommand([]), { ok: true, command: null, ...defaults });
@@ -50,4 +50,13 @@ test("view takes an optional port within the unprivileged range", () => {
   assert.deepEqual(parseCommand(["view", "--port", "8080"]), { ok: true, command: "view", ...defaults, port: 8080 });
   for (const port of ["80", "70000", "x", "1.5"]) assert.equal(parseCommand(["view", "--port", port]).ok, false, port);
   assert.equal(parseCommand(["run", "--port", "8080"]).ok, false);
+});
+
+test("export needs a folder and may pick runs or experiments", () => {
+  assert.equal(parseCommand(["export"]).ok, false);
+  assert.deepEqual(parseCommand(["export", "--out", "replay"]), { ok: true, command: "export", ...defaults, out: "replay" });
+  assert.deepEqual(parseCommand(["export", "--out", "r", "--include", "run-1", "--include", "exp-1"]), {
+    ok: true, command: "export", ...defaults, out: "r", include: ["run-1", "exp-1"],
+  });
+  assert.equal(parseCommand(["view", "--out", "r"]).ok, false);
 });

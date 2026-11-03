@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { loadConfig } from "../config/load.ts";
 import type { RepodConfig } from "../config/schema.ts";
-import type { LedgerWriter } from "../gateway/ledger.ts";
+import { ledgerPath, readEvents, type LedgerWriter } from "../gateway/ledger.ts";
 import { totalSpentUsd } from "../gateway/spend.ts";
 import type { ModelRequest, ModelResult } from "../gateway/types.ts";
 import type { ModelCaller } from "../orchestrator/orchestrator.ts";
@@ -143,6 +143,7 @@ describe("runExperiment", () => {
   test("runs each arm on a fresh workspace and measures holdout, cost and calls", async () => {
     const spentSeen: number[] = [];
     const o = options({
+      endpoint: "http://127.0.0.1:8787",
       // A writes both functions; C's single task only adds mul.
       gatewayFor: (_preset, ledger, spentBefore) => {
         spentSeen.push(spentBefore);
@@ -156,6 +157,10 @@ describe("runExperiment", () => {
     const result = await runExperiment(o);
 
     assert.equal(result.stoppedEarly, null);
+    // Where the data came from is kept with the result and with every run.
+    assert.equal(result.endpoint, "http://127.0.0.1:8787");
+    const firstEvent = (await readEvents(ledgerPath(path.join(o.runsDir, result.runs[0]!.runId))))[0];
+    assert.equal(firstEvent?.type === "run_started" && firstEvent.endpoint, "http://127.0.0.1:8787");
     // C's frozen result fails one holdout test, which leaves its run incomplete.
     assert.deepEqual(result.runs.map((r) => [r.arm, r.status]), [["A", "completed"], ["C", "incomplete"]]);
     const [a, c] = result.runs;

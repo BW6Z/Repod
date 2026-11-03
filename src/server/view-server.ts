@@ -53,10 +53,11 @@ export interface RunListing {
   status: string; // "running" until run_finished, then its status
   mode: string | null; // from the report: "coordinated" or "single-model"
   costUsd: number | null; // from the report, once it exists
+  endpoint: string | null; // origin of the model API, when the ledger recorded it
 }
 
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const PAGE_FILES = new Set(["index.html", "app.js", "style.css"]);
+export const PAGE_FILES = new Set(["index.html", "app.js", "style.css"]);
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -120,12 +121,13 @@ export async function listRuns(runsDir: string): Promise<RunListing[]> {
       status: typeof finished?.status === "string" ? finished.status : started ? "running" : "probe",
       mode: typeof report?.mode === "string" ? report.mode : null,
       costUsd: typeof report?.costUsd === "number" ? report.costUsd : null,
+      endpoint: typeof started?.endpoint === "string" ? started.endpoint : null,
     });
   }
   return runs.sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
 }
 
-async function listExperiments(runsDir: string): Promise<Array<Record<string, unknown>>> {
+export async function listExperiments(runsDir: string): Promise<Array<Record<string, unknown>>> {
   const dir = path.join(runsDir, "experiments");
   let files: string[];
   try {
@@ -139,7 +141,7 @@ async function listExperiments(runsDir: string): Promise<Array<Record<string, un
 }
 
 /** Tier, provider and list price of every model in any preset. */
-function listModels(config: RepodConfig): Record<string, { tier: string; provider: string; inputPerMTok: number | null; outputPerMTok: number | null }> {
+export function listModels(config: RepodConfig): Record<string, { tier: string; provider: string; inputPerMTok: number | null; outputPerMTok: number | null }> {
   const models: Record<string, { tier: string; provider: string; inputPerMTok: number | null; outputPerMTok: number | null }> = {};
   for (const preset of config.presets.values()) {
     for (const m of preset.models) {

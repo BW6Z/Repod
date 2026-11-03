@@ -33,6 +33,8 @@ export class MetaAdapter implements ProviderAdapter {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  /** Origin of the API this adapter calls; recorded with each run so real and rehearsal data stay apart. */
+  readonly endpoint: string;
 
   constructor(options: MetaAdapterOptions) {
     if (!options.apiKey) throw new Error("MODEL_API_KEY is not set (see .env.example)");
@@ -51,6 +53,7 @@ export class MetaAdapter implements ProviderAdapter {
     if (protocol !== "https:" && protocol !== "http:") throw new Error(`MODEL_API_BASE_URL must be http or https: ${baseUrl}`);
     this.apiKey = options.apiKey;
     this.baseUrl = baseUrl;
+    this.endpoint = new URL(baseUrl).origin;
     this.fetchImpl = options.fetch ?? fetch;
   }
 

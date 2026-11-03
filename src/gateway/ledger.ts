@@ -43,7 +43,9 @@ const taskId = z.string().nullable();
  * arrived but failed the schema is recorded as "format", not "ok".
  */
 const LedgerEventSchema = z.discriminatedUnion("type", [
-  z.object({ ...base, type: z.literal("run_started"), preset: z.string(), request: z.string() }),
+  z.object({ ...base, type: z.literal("run_started"), preset: z.string(), request: z.string(),
+    // Origin of the model API, such as https://api.meta.ai; absent in ledgers written before it was recorded.
+    endpoint: z.string().optional() }),
   z.object({ ...base, type: z.literal("call_start"), role: z.enum(ROLES), model: z.string(), taskId, attemptId, reservedUsd: Money }),
   z.object({
     ...base,

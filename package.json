@@ -2,6 +2,7 @@
   "name": "repod",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Meta-coordinated multi-model development assistant (hackathon prototype).",
   "type": "module",
   "engines": {

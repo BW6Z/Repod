@@ -43,9 +43,10 @@ real models. Do not treat planned items as working features.
 | Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
 | Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
 | Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
-| Run viewer: local page showing each run in tabs (live while it runs): an overview with an acceptance summary, the conversation with Meta, each task's attempts and who decided what after a failure, and the delivered diff; cost against one strong model from experiment results, and experiment results (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
+| Run viewer: local page showing each run in tabs (live while it runs): an overview with an acceptance summary, the conversation with Meta, each task's attempts and who decided what after a failure, and the delivered diff; cost against one strong model from experiment results, and experiment results, each marked with where its data came from (Meta Model API, a rehearsal, or not recorded) and flagged when it is not a formal experiment or rests on fewer than three runs per arm (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
 | Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented, tested with a fake Meta API; **not yet run with real models** |
-| Free-form requests on the page; static replay export | Planned |
+| Static replay export: recorded runs as static files anyone can open without a key; local paths and holdout output removed (`export`; `src/server/replay.ts`) | Implemented, tested on rehearsal data; nothing published yet |
+| Free-form requests on the page | Planned |
 
 ## Requirements
 
@@ -81,6 +82,7 @@ npm run repod -- experiment --holdout <dir>                    # arms A and C, 1
 npm run repod -- experiment --holdout <dir> --runs 3 --label formal
 npm run repod -- view                                          # read-only run viewer on http://127.0.0.1:4173; free
 npm run repod -- view --interactive --holdout <dir>            # the page can start the demo run; costs real money
+npm run repod -- export --out <dir> [--include <id>]...         # static replay of recorded runs; free
 ```
 
 `run` copies `sample-repo/` into `runs/<runId>/workspace`, gives Meta the
@@ -102,6 +104,14 @@ Note there is only one `--` (it tells npm where its own options end). The CLI
 rejects unknown commands, unknown options and stray arguments instead of
 ignoring them, so a typo cannot silently send a paid request to the default
 model.
+
+`export` writes the viewer page and the finished runs (or only the runs and
+experiments named with `--include`; an experiment brings its runs) into a
+new, empty folder. Absolute paths of this machine are replaced with `<repo>`,
+`<runs>` and `<home>`, the holdout tests' output is dropped (only their
+counts stay), and the page cannot start runs. Serve the folder with any static
+file server, for example `python -m http.server` inside it; browsers do not
+let the page read its data from `file://`.
 
 `probe` needs `MODEL_API_KEY` in `.env`. Every call is recorded in
 `runs/<runId>/events.jsonl` (gitignored).
@@ -132,7 +142,7 @@ src/
   workspace/   isolated run copies, path allowlist, diffs
   verifier/    fixed checks run as child processes
   eval/        demo kit loader and holdout preparation
-  server/      server for the run viewer (read-only unless --interactive)
+  server/      server for the run viewer (read-only unless --interactive); static replay export
 web/           run viewer page (plain HTML, CSS, JS)
 sample-repo/   demo baseline that runs modify (copies only); SPEC.md holds its rules
 eval/          experiment protocol; demo kit (eval/demo); holdout tests after the experiments
@@ -210,9 +220,15 @@ ones, for example `runs/rehearsal`. Leave both unset for real runs.
   they cannot be checked out from here yet.
 - Running time of the sample's 20,000-task cases is not a pass condition and
   is not reported yet.
-- Competition compliance is checked against the Participant Guide only;
-  the judging rubric and the Official Rules are still open. See
+- Competition compliance is checked against the Participant Guide, the
+  event page and the Official Rules; the Credit Terms and several questions
+  (such as other providers' models) are still open. See
   `docs/compliance.md`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Under the Official Rules the Organizers also
+receive their own licence to the submission; that does not change this one.
 
 ## Documentation
 

@@ -48,6 +48,27 @@ const when = (ts) => (ts ? new Date(ts).toLocaleString([], { month: "short", day
 const STATUS_CLASS = { passed: "ok", completed: "ok", running: "live", "waiting for you": "live", failed: "bad", stopped: "bad", incomplete: "bad", interrupted: "bad", skipped: "warn" };
 const statusText = (status) => el("span", { class: `status ${STATUS_CLASS[status] ?? ""}` }, status);
 
+// The Meta Model API's origin (META_BASE_URL in src/gateway/adapters/meta.ts).
+const META_API = "https://api.meta.ai";
+
+/**
+ * Where a run's or an experiment's model calls went, as [text, warn]. Data
+ * from a fake API or a proxy is marked, so a rehearsal is never read as a
+ * result; data from before the origin was recorded says so.
+ */
+function dataSource(endpoint) {
+  if (!endpoint) return ["model API not recorded", false];
+  if (endpoint === META_API) return ["Meta Model API", false];
+  const host = endpoint.replace(/^https?:\/\//, "");
+  return /^(127\.0\.0\.1|localhost|\[::1\])(:|$)/.test(host)
+    ? [`rehearsal against a local fake API (${host})`, true]
+    : [`${host}, not the Meta Model API`, true];
+}
+const sourceNote = (endpoint, prefix = "") => {
+  const [text, warn] = dataSource(endpoint);
+  return el("span", { class: `note ${warn ? "raised" : ""}` }, prefix + text);
+};
+
 function modelBadge(id) {
   const tier = state.models[id]?.tier;
   return el("span", { class: `badge ${tier ? `tier-${tier}` : ""}`, title: tier ? `${tier} tier` : null }, id);
@@ -262,7 +283,8 @@ function historyColumn() {
           const dot = r.kind === "probe" ? "" : r.status === "running" ? "running" : STATUS_CLASS[r.status] ?? "";
           return el("li", {}, el("button", { type: "button", "aria-current": String(r.id === state.runId), title: r.id, onclick: () => openRun(r.id) },
             el("span", { class: "t" }, el("span", { class: `dot ${dot}` }), name),
-            el("span", { class: "s num" }, [when(r.startedAt) || r.id, r.kind === "probe" ? null : r.status, r.costUsd !== null ? usd(r.costUsd) : null].filter(Boolean).join(" · "))));
+            el("span", { class: "s num" }, [when(r.startedAt) || r.id, r.kind === "probe" ? null : r.status, r.costUsd !== null ? usd(r.costUsd) : null,
+              r.endpoint && r.endpoint !== META_API ? "rehearsal" : null].filter(Boolean).join(" · "))));
         }))
       : empty("No runs yet."),
     state.source ? el("p", { class: "note" }, state.source) : null);
@@ -274,7 +296,8 @@ function runHead(run, view, report, status) {
   return el("div", { class: "run-head" },
     el("h1", { class: "run-name" }, view.started ? `${single ? "Single model" : "Meta"} · ${view.started.preset} preset` : "Connectivity probe"),
     view.started ? statusText(status) : null,
-    el("span", { class: "note" }, [when(view.started?.ts), single ? "no coordinator (experiment arm A)" : null, run].filter(Boolean).join(" · ")));
+    el("span", { class: "note" }, [when(view.started?.ts), single ? "no coordinator (experiment arm A)" : null, run].filter(Boolean).join(" · ")),
+    view.started ? sourceNote(view.started.endpoint) : null);
 }
 
 // ---- overview ----------------------------------------------------------------------
@@ -640,9 +663,14 @@ function costCard(view, report) {
 
 const ARM_LABEL = { A: "One strong model (arm A)", B: "Meta, quality preset (arm B)", C: "Meta, saving preset (arm C)" };
 
-/** Routed runs against one strong model, from the newest experiment; never estimated. */
+/**
+ * Routed runs against one strong model, from the newest formal experiment
+ * (the newest of any label when there is none); never estimated. The note
+ * says where the figures come from and how many runs they rest on.
+ */
 function compareCard(view, report) {
-  const experiment = state.experiments.find((x) => x.arms?.filter((a) => a.costUsd).length >= 2);
+  const usable = state.experiments.filter((x) => x.arms?.filter((a) => a.costUsd).length >= 2);
+  const experiment = usable.find((x) => x.label === "formal") ?? usable[0];
   if (!experiment) {
     return card("Versus one strong model",
       empty("No comparison yet."),
@@ -656,7 +684,19 @@ function compareCard(view, report) {
       el("div", { class: "label" }, el("span", {}, ARM_LABEL[a.arm] ?? `Arm ${a.arm}`), el("span", { class: "num" }, usd(a.costUsd.median))),
       bar(a.costUsd.median / max, a.arm === "A" ? "tier-strong" : "", true),
       el("div", { class: "note num" }, `holdout pass rate ${a.holdoutPassRate ? pct(a.holdoutPassRate.median) : "–"} · ${plural(a.runs, "run")}`)))),
-    el("p", { class: "note" }, `Medians from experiment ${experiment.label} (${when(experiment.startedAt)}).${report?.mode !== "single-model" && total !== null ? ` This run: ${usd(total)}.` : ""}`));
+    el("p", { class: "note" }, `Medians from experiment ${experiment.label} (${when(experiment.startedAt)}).${report?.mode !== "single-model" && total !== null ? ` This run: ${usd(total)}.` : ""}`),
+    experimentCaveats(experiment, view.started?.endpoint));
+}
+
+/** What limits an experiment's figures: its source, its label, its sample size. */
+function experimentCaveats(x, runEndpoint = undefined) {
+  const fewest = Math.min(...(x.arms ?? []).map((a) => a.runs));
+  return [
+    sourceNote(x.endpoint, "Data: "),
+    x.label === "formal" ? null : el("p", { class: "note raised" }, `Label "${x.label}", not "formal": a check of the pipeline, not a reported result.`),
+    Number.isFinite(fewest) && fewest < 3 ? el("p", { class: "note raised" }, `${plural(fewest, "run")} in the smallest arm: too few for a stable median.`) : null,
+    runEndpoint && x.endpoint && runEndpoint !== x.endpoint ? el("p", { class: "note raised" }, "This run and the experiment called different model APIs.") : null,
+  ];
 }
 
 function callsCard(view) {
@@ -687,6 +727,7 @@ function renderExperiments(experiments) {
     el("div", { class: "row" }, el("h2", {}, `${x.label}: ${x.experimentId}`), statusText(x.stoppedEarly ? "stopped early" : "completed")),
     x.stoppedEarly ? el("p", { class: "note" }, x.stoppedEarly) : null,
     el("p", { class: "note" }, `Started ${when(x.startedAt)} · source ${x.sourceCommit ?? "unknown"} · median (min–max)`),
+    experimentCaveats(x),
     el("div", { class: "table-wrap" }, el("table", {},
       el("thead", {}, el("tr", {}, ["Arm", "Runs", "Completed", "Holdout fully passed", "Holdout pass rate", "Cost", "Wall time"].map((h, i) => el("th", { class: i > 0 ? "num" : null }, h)))),
       el("tbody", {}, x.arms.map((a) => el("tr", {},

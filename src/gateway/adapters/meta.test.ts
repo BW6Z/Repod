@@ -42,6 +42,11 @@ function fakeFetch(status: number, body: unknown, headers: Record<string, string
 }
 
 describe("MetaAdapter", () => {
+  test("names the origin it calls, so runs record where their data came from", () => {
+    assert.equal(new MetaAdapter({ apiKey: "k" }).endpoint, "https://api.meta.ai");
+    assert.equal(new MetaAdapter({ apiKey: "k", baseUrl: "http://127.0.0.1:8787/v1" }).endpoint, "http://127.0.0.1:8787");
+  });
+
   test("sends a strict json_schema request with auth and store disabled", async () => {
     const { impl, calls } = fakeFetch(200, completed);
     await new MetaAdapter({ apiKey: "LLM_test_key", fetch: impl }).call(request);

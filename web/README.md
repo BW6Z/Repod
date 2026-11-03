@@ -56,11 +56,19 @@ it runs, Overview once it has finished, until you pick a tab yourself.
 
 - **Side**: cost at list price with the split by phase, and **versus one
   strong model**: the median cost and holdout pass rate per arm from the
-  newest experiment (shown only when an experiment result exists, never
-  estimated).
+  newest experiment labelled `formal` (the newest of any label when there is
+  none; shown only when an experiment result exists, never estimated).
 - **Experiments**: per arm, runs, completed runs, runs that fully passed the
   holdout, pass rate, cost and wall time (median and range), with links to
   every run.
+
+Where the data came from is never left to the reader to guess. Each run and
+experiment records the origin of the model API it called: the run head,
+the run list, the comparison and each experiment say "Meta Model API", mark
+a local fake API as a rehearsal (or another host as not the Meta Model
+API), and say "not recorded" for data from before the origin was kept. An
+experiment not labelled `formal`, an arm with fewer than three runs, and a
+comparison from another API than the open run's are flagged as well.
 
 The style is frosted glass in muted blues over a soft gradient (CSS
 `backdrop-filter`). Where the browser cannot blur, or the user asks for
@@ -84,14 +92,16 @@ The page reads only relative paths under `data/`:
 | `data/runs/<runId>/report.json` | the run's report, once written |
 
 `npm run repod -- view` serves these from `runs/` (`src/server/view-server.ts`).
-The same layout as static files is meant for a published replay; exporting
-one is not implemented yet.
+`npm run repod -- export --out <dir>` writes the same layout as static files,
+with `source.json` set to `replay` and the session disabled
+(`src/server/replay.ts`). Serve that folder with any static file server; the
+page fetches its data, which browsers do not allow from `file://`.
 
 Run data is always inserted as text, never as markup: plans, summaries and
 check output come from models and from code they wrote. The server sends a
-content security policy that allows only the page's own files.
+content security policy that allows only the page's own files; `index.html`
+repeats it in a meta tag, so a replay on another host keeps it.
 
 ## Not implemented yet
 
 - Requests other than the demo request (they would need their own checks).
-- Exporting a static replay for publishing.

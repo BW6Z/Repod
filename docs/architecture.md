@@ -32,7 +32,11 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
   while a run is still going, and `task_decision` events its history of
   attempts and decisions per task. In interactive mode the page also starts the
   demo run and answers Meta through the pipeline's hooks
-  (`src/server/session.ts`), in place of the terminal.
+  (`src/server/session.ts`), in place of the terminal. `run_started` and each
+  experiment result record the origin of the model API, so the page can tell
+  real data from a rehearsal against a fake API. `npm run repod -- export`
+  writes the page and finished runs as a static replay
+  (`src/server/replay.ts`).
 
 ## Run flow (`runPipeline`)
 

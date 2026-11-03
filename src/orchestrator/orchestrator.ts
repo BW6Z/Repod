@@ -90,6 +90,7 @@ export interface PipelineOptions {
   // closing summary. Everything else (checks, write scope, limits, freeze,
   // holdout) is the same as in a coordinated run.
   singleModelTask?: PlannedTask;
+  endpoint?: string; // origin of the model API, recorded so rehearsal runs are never taken for real ones
 }
 
 /**
@@ -182,7 +183,12 @@ class Run {
       costUsd: null,
       costByPhase: this.phaseCost,
     };
-    await this.o.ledger.append({ type: "run_started", preset: this.o.preset.name, request: this.o.request });
+    await this.o.ledger.append({
+      type: "run_started",
+      preset: this.o.preset.name,
+      request: this.o.request,
+      ...(this.o.endpoint ? { endpoint: this.o.endpoint } : {}),
+    });
 
     try {
       const knownFiles = await listFiles(this.o.workspace.root);

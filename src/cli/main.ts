@@ -12,6 +12,7 @@ import { MetaAdapter } from "../gateway/adapters/meta.ts";
 import { ModelGateway } from "../gateway/gateway.ts";
 import { LedgerWriter, ledgerPath } from "../gateway/ledger.ts";
 import { acquirePaidRunLock } from "../gateway/run-lock.ts";
+import { exportReplay } from "../server/replay.ts";
 import { InteractiveSession } from "../server/session.ts";
 import { createViewServer } from "../server/view-server.ts";
 import { SpendTracker, totalSpentUsd } from "../gateway/spend.ts";
@@ -71,6 +72,10 @@ Commands:
                         Open the run viewer on http://127.0.0.1:<port> (default 4173).
                         Read-only and free by default. --interactive lets the page start
                         the demo run and hold the conversation with Meta (costs real money).
+  export --out <dir> [--include <id>]...
+                        Write a static replay of recorded runs for publishing (free).
+                        --include picks a run or an experiment (with its runs); default: all
+                        finished runs and experiments. Local paths and holdout output are removed.
 `;
 
 // Providers this CLI can call: it constructs only the Meta adapter.
@@ -256,6 +261,7 @@ async function runDemo(o: {
       availableChecks: kit.availableChecks,
       remainingBudgetUsd: Math.min(limits.budgetUsd, limits.totalBudgetUsd - spentBefore),
       hooks: o.hooks,
+      endpoint: adapter.endpoint,
     });
 
     const reportFile = path.join(workspace.runDir, "report.json");
@@ -321,6 +327,7 @@ async function experiment(options: CommandOptions): Promise<number> {
           holdout: holdoutDir,
         }),
       sourceCommit: sourceCommit(),
+      endpoint: adapter.endpoint,
       // Written after every run, so an interruption keeps the results so far.
       save: (partial) => writeFile(file, JSON.stringify(partial, null, 2)),
       gatewayFor: (preset, ledger, spentBeforeUsd) =>
@@ -371,6 +378,16 @@ async function view(options: CommandOptions): Promise<number> {
   return 0;
 }
 
+/** Writes the static replay; reads the runs folder only and makes no model calls. */
+async function exportCommand(options: CommandOptions): Promise<number> {
+  const outDir = path.resolve(options.out!);
+  const config = await loadConfig(configDir);
+  const exported = await exportReplay({ webDir: path.join(repoRoot, "web"), runsDir, repoRoot, config, outDir, include: options.include });
+  console.log(`Replay written to ${outDir}: ${exported.runs.length} run(s), ${exported.experiments.length} experiment(s).`);
+  console.log("Serve the folder with any static file server; the page cannot open it from disk (file://).");
+  return 0;
+}
+
 function printReport(report: RunReport, reportFile: string): void {
   console.log(`\nRun ${report.status}.`);
   for (const task of report.tasks) {
@@ -406,6 +423,8 @@ async function main(argv: string[]): Promise<number> {
       return experiment(parsed);
     case "view":
       return view(parsed);
+    case "export":
+      return exportCommand(parsed);
     case null:
       console.log(USAGE);
       return 0;
