@@ -53,6 +53,12 @@ export interface RunReport {
   // checks ran; null when the run was not frozen. Holdout results only
   // count for the frozen content when this is true.
   frozenIntact: boolean | null;
+  // What the run delivered: the workspace's diff against the baseline. Taken
+  // at freeze time (frozen: true, the version the holdout checked) or, for a
+  // run that never froze, when it ended. null when no diff was taken, and in
+  // reports written before this field existed. provided: the visible test
+  // files the program copied in for the check groups (not model output).
+  changes: { diff: string; truncated: boolean; frozen: boolean; provided: string[] } | null;
   problems: string[]; // every reason the run is not completed
   summary: RunSummary | null;
   costUsd: number | null; // list-price cost of all calls; null if any cost is unknown

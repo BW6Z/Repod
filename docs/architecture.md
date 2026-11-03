@@ -29,7 +29,8 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
 - **Run viewer** (`web/`, served by `src/server/view-server.ts`) reads the
   ledgers, reports and experiment results; the `conversation` and
   `plan_approved` ledger events let it show the conversation and the plan
-  while a run is still going. In interactive mode the page also starts the
+  while a run is still going, and `task_decision` events its history of
+  attempts and decisions per task. In interactive mode the page also starts the
   demo run and answers Meta through the pipeline's hooks
   (`src/server/session.ts`), in place of the terminal.
 
@@ -70,7 +71,13 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
    - **stop the run** (budget, quota, rejected or failed requests, ledger
      write failure, environment problems in checks, a check process that
      could not be stopped, which also taints the workspace).
-   A global rework limit applies across tasks. Code tasks without a type
+   A global rework limit applies across tasks. Every decision after a
+   failed attempt is written to the ledger as a `task_decision`: what
+   failed, repair, escalate or stop, and whether Meta decided it or the
+   program did (a limit, the fallback when triage has no usable reply, Meta's
+   choice replaced because it was not allowed, or arm A, which has no
+   coordinator). The records only describe; they never steer the run. Meta's
+   triage calls are billed to their task. Code tasks without a type
    check and visible tests do not run. Each task's result is kept as soon as
    it is known, so if the run stops on an error, the report still lists the
    finished tasks; the task that was running is "stopped" and the rest are
@@ -83,7 +90,10 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
 6. **Freeze**: only when every task passed. The dev checks run again on the
    integrated result, every file is hashed, holdout checks run once without
    feedback to any model, and the hashes are compared again so results are
-   bound to the frozen content (`frozenIntact` in the report).
+   bound to the frozen content (`frozenIntact` in the report). The diff
+   against the baseline is taken at the same moment and kept in the report
+   (`changes`, cut at 200 KB); a run that never froze keeps the diff it
+   ended with, marked as not frozen.
 7. **Summarize**: Meta writes the closing message; the program owns every
    status and figure in the report. Skipped when the budget ran out.
 

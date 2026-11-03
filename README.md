@@ -43,7 +43,7 @@ real models. Do not treat planned items as working features.
 | Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
 | Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
 | Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
-| Run viewer: local page showing each run as one conversation with Meta (live while it runs), cost against one strong model from experiment results, and experiment results (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
+| Run viewer: local page showing each run in tabs (live while it runs): an overview with an acceptance summary, the conversation with Meta, each task's attempts and who decided what after a failure, and the delivered diff; cost against one strong model from experiment results, and experiment results (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
 | Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented, tested with a fake Meta API; **not yet run with real models** |
 | Free-form requests on the page; static replay export | Planned |
 

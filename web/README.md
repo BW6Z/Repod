@@ -25,22 +25,39 @@ the run.
 ## What it shows
 
 The run view has three columns: the run list (left; a picker in the header
-on narrow screens), the conversation (center) and the numbers (right).
+on narrow screens), the open run (center) and the numbers (right). The open
+run is split into tabs, so each answers one question:
 
-- **Conversation with Meta** (center): the whole run as one thread, from
-  the run's ledger. Your request, Meta's questions, your answers, each
-  proposed plan and your decision. Then the approved plan with each task's
-  model (after the capability floor, with an arrow when the task escalated
-  to a stronger model), why Meta chose it, its status, attempts and cost.
-  Last, Meta's summary with problems and review findings. In interactive
-  mode, when the run waits for you, the proposed plan appears in the thread
-  and the answer form or the plan decision sits at the bottom.
-- **Side**: cost at list price with the split by phase; **versus one strong
-  model**, the median cost and holdout pass rate per arm from the newest
-  experiment (shown only when an experiment result exists, never
-  estimated); checks (per task, integrated, holdout with its count and
-  whether the frozen content stayed intact); and the model call log,
-  collapsed.
+- **Overview**: the result first. The acceptance summary, computed from the
+  report rather than Meta's words: tasks passed, integrated checks, holdout
+  tests and blocking review findings, each judged on its own. Then one line
+  per task with the model it ran on (an arrow when it escalated to a
+  stronger model), its status, attempts and cost; a line opens that task on
+  the Tasks tab. Last, Meta's summary with problems and review findings.
+- **Conversation**: your request, Meta's questions, your answers, each
+  proposed plan and your decision; the approved plan is folded. In
+  interactive mode, when the run waits for you, the plan under decision is
+  open here and the answer form or the plan decision sits at the bottom.
+- **Tasks**: one line per task, opened on demand. An open task shows its
+  model (after the capability floor) and why Meta chose it, what it writes,
+  and its history: every attempt with its model, cost and checks, and
+  between attempts the decision that followed a failure (repair, escalate
+  or stop), whether Meta or the program made it, and why. Tasks with a
+  decision or still running are open by default. Runs recorded before
+  decisions were logged show the attempts only. The model call log,
+  collapsed, is at the bottom.
+- **Changes** (once the report is written): the changed files with their
+  diff, the frozen version the holdout ran on or marked as not frozen.
+  Visible tests that Repod copied in for the checks are labelled as such,
+  not shown as the model's work.
+
+The tab follows the run: Conversation while Meta waits for you, Tasks while
+it runs, Overview once it has finished, until you pick a tab yourself.
+
+- **Side**: cost at list price with the split by phase, and **versus one
+  strong model**: the median cost and holdout pass rate per arm from the
+  newest experiment (shown only when an experiment result exists, never
+  estimated).
 - **Experiments**: per arm, runs, completed runs, runs that fully passed the
   holdout, pass rate, cost and wall time (median and range), with links to
   every run.

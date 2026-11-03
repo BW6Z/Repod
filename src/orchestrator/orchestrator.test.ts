@@ -130,6 +130,12 @@ async function run(gateway: ScriptedGateway, overrides: Partial<PipelineOptions>
   return { report, workspace, ledger };
 }
 
+/** The task_decision records of a run, as [decision, by, requested, fromModel, toModel]. */
+async function decisions(ledger: LedgerWriter) {
+  return (await readEvents(ledger.file)).flatMap((e) =>
+    e.type === "task_decision" ? [[e.decision, e.by, e.requested, e.fromModel, e.toModel]] : []);
+}
+
 // ---- tests ----------------------------------------------------------------------
 
 describe("runPipeline: the main path", () => {
@@ -144,6 +150,10 @@ describe("runPipeline: the main path", () => {
     assert.ok(report.manifest && "src/math.ts" in report.manifest);
     assert.equal(await readFile(path.join(workspace.root, "src", "math.ts"), "utf8"), WITH_MUL);
     assert.equal(report.summary?.message, "Done.");
+    // The delivered diff is the frozen version, the one the holdout checks.
+    assert.equal(report.changes?.frozen, true);
+    assert.equal(report.changes?.truncated, false);
+    assert.match(report.changes?.diff ?? "", /^\+export function mul/m);
     const events = await readEvents(ledger.file);
     const types = events.map((e) => e.type);
     assert.equal(types[0], "run_started");
@@ -282,11 +292,31 @@ describe("runPipeline: failures, repair and escalation", () => {
       triage_decision: [triage("repair"), triage("escalate")],
       run_summary: [summary],
     });
-    const { report } = await run(gateway);
+    const { report, ledger } = await run(gateway);
     assert.equal(report.status, "completed", report.problems.join("\n"));
     assert.deepEqual(gateway.calls("executor_output").map((r) => r.model), ["muse-spark-1.3", "muse-spark-1.3", "muse-wonder-1.0"]);
     assert.equal(report.tasks[0]?.escalated, true);
     assert.match(gateway.calls("triage_decision")[1]?.input ?? "", /Allowed decisions\nescalate, stop/);
+    // Each triage is recorded as Meta's decision, and billed to the task.
+    assert.deepEqual(await decisions(ledger), [
+      ["repair", "meta", null, "muse-spark-1.3", "muse-spark-1.3"],
+      ["escalate", "meta", null, "muse-spark-1.3", "muse-wonder-1.0"],
+    ]);
+    assert.ok(gateway.calls("triage_decision").every((r) => r.taskId === "T1"));
+  });
+
+  test("without a usable triage reply the program's default is recorded as the program's decision", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1"))],
+      executor_output: [writes({ "src/math.ts": BROKEN }), writes({ "src/math.ts": WITH_MUL })],
+      triage_decision: [{ fail: "format" }],
+      run_summary: [summary],
+    });
+    const { report, ledger } = await run(gateway);
+    assert.equal(report.status, "completed", report.problems.join("\n"));
+    assert.deepEqual(await decisions(ledger), [["repair", "program", null, "muse-spark-1.3", "muse-spark-1.3"]]);
+    const recorded = (await readEvents(ledger.file)).find((e) => e.type === "task_decision");
+    assert.match(recorded?.type === "task_decision" ? recorded.reason : "", /triage unavailable \(format\); program default/);
   });
 
   test("output outside the write scope is rejected, and a stopped task skips its dependents", async () => {
@@ -304,6 +334,8 @@ describe("runPipeline: failures, repair and escalation", () => {
     assert.match(gateway.calls("triage_decision")[0]?.input ?? "", /outside the task's write scope/);
     await assert.rejects(readFile(path.join(workspace.root, "src", "other.ts")));
     assert.equal(report.manifest, null, "an incomplete run is not frozen");
+    // The failed task was rolled back, so nothing is delivered, and it is marked as not frozen.
+    assert.deepEqual(report.changes, { diff: "", truncated: false, frozen: false, provided: [] });
   });
 
   test("a task can read a file its dependency created, with the content actually written", async () => {
@@ -381,11 +413,16 @@ describe("runPipeline: failures, repair and escalation", () => {
       triage_decision: [triage("escalate")], // asked for, but not allowed
       run_summary: [summary],
     });
-    const { report } = await run(gateway);
+    const { report, ledger } = await run(gateway);
     assert.match(gateway.calls("triage_decision")[0]?.input ?? "", /# Failure \(rejected-output\)[\s\S]*# Allowed decisions\nrepair, stop/);
     assert.deepEqual(gateway.calls("executor_output").map((r) => r.model), ["muse-spark-1.3", "muse-spark-1.3"]);
     assert.equal(report.tasks[0]?.escalated, false);
     assert.match(report.tasks[0]?.reason ?? "", /attempts exhausted/);
+    // Meta's escalation was not allowed: the program's replacement is recorded with Meta's choice.
+    assert.deepEqual(await decisions(ledger), [
+      ["repair", "program", "escalate", "muse-spark-1.3", "muse-spark-1.3"],
+      ["stop", "program", null, "muse-spark-1.3", null],
+    ]);
   });
 
   test("an output with no files is not a result: it is repaired, not passed", async () => {
@@ -481,10 +518,15 @@ describe("runPipeline: single-model mode (experiment arm A)", () => {
     const reworks = config.limits.maxTotalReworks;
     const broken = Array.from({ length: reworks + 1 }, () => writes({ "src/math.ts": BROKEN }));
     const gateway = new ScriptedGateway({ executor_output: broken });
-    const { report } = await run(gateway, { singleModelTask: solo() });
+    const { report, ledger } = await run(gateway, { singleModelTask: solo() });
 
     assert.equal(report.tasks[0]?.status, "failed");
     assert.match(report.tasks[0]?.reason ?? "", /rework limit reached/);
+    // Every repair is the program's, and the limit's stop is recorded last.
+    const recorded = await decisions(ledger);
+    assert.equal(recorded.length, reworks + 1);
+    assert.ok(recorded.slice(0, -1).every(([decision, by]) => decision === "repair" && by === "program"));
+    assert.deepEqual(recorded.at(-1), ["stop", "program", null, "muse-wonder-1.0", null]);
     assert.equal(report.tasks[0]?.attempts, reworks + 1);
     assert.equal(report.tasks[0]?.escalated, false);
     assert.equal(gateway.calls("triage_decision").length, 0);
@@ -534,6 +576,9 @@ describe("runPipeline: check groups", () => {
     assert.match(second!, /=== FILE: test\/sub\.test\.ts ===/);
     assert.deepEqual(report.pendingCheckGroups, []);
     await readFile(path.join(workspace.root, "test", "sub.test.ts")); // both groups are in the final result
+    // The copied tests are in the delivered diff, but listed as the program's, not the model's.
+    assert.match(report.changes?.diff ?? "", /^diff --git a\/test\/sub\.test\.ts/m);
+    assert.deepEqual(report.changes?.provided.toSorted(), ["test/mul.test.ts", "test/sub.test.ts"]);
   });
 
   test("each visible test run must execute the baseline's tests plus those of the groups present", async () => {

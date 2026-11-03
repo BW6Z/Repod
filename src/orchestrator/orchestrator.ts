@@ -138,6 +138,9 @@ const RUN_STOPPING: ReadonlySet<FailureKind> = new Set(["budget", "quota", "reje
 const ENVIRONMENT_FAILURES = new Set(["spawn_error", "no_tests"]);
 
 const MAX_EVIDENCE_CHARS = 8000;
+// The delivered diff is kept in the report for the viewer; a runaway output
+// must not make the report unreadable.
+const MAX_DELIVERED_DIFF_CHARS = 200_000;
 
 class Run {
   private readonly o: PipelineOptions;
@@ -173,6 +176,7 @@ class Run {
       holdout: [],
       manifest: null,
       frozenIntact: null,
+      changes: null,
       problems: this.problems,
       summary: null,
       costUsd: null,
@@ -205,6 +209,11 @@ class Run {
     // that far: finished tasks with their results, the task that was running
     // when the run stopped as stopped, the rest as skipped.
     if (report.plan) report.tasks = report.plan.map((t) => this.outcomes.get(t.id) ?? this.notRun(t, t.id === this.runningTask ? "stopped" : "skipped"));
+
+    // A run that never froze still shows what it left in the workspace (the
+    // tasks that passed; failed ones were rolled back), marked as not frozen.
+    // Display only: a failure here must not change the run's result.
+    if (report.plan && report.manifest === null) report.changes = await this.delivered(false).catch(() => null);
 
     if (this.stopReason) this.problems.unshift(`run stopped: ${this.stopReason}`);
     for (const task of report.tasks) {
@@ -270,8 +279,8 @@ class Run {
     return result;
   }
 
-  private callCoordinator<T>(phase: CostPhase, prompt: PromptKind, schema: ZodType<T>, schemaName: string, input: string) {
-    return this.callModel(phase, "coordinator", this.o.preset.coordinator, prompt, schema, schemaName, input, null);
+  private callCoordinator<T>(phase: CostPhase, prompt: PromptKind, schema: ZodType<T>, schemaName: string, input: string, taskId: string | null = null) {
+    return this.callModel(phase, "coordinator", this.o.preset.coordinator, prompt, schema, schemaName, input, taskId);
   }
 
   // ---- 2 and 3: plan and approve ------------------------------------------
@@ -581,12 +590,31 @@ class Run {
       if (attempt.kind === "stop-task") return finish("failed", attempt.reason);
 
       // A retryable failure: the program decides what is allowed, Meta picks.
+      // Every outcome is recorded as a task_decision so the viewer can show
+      // why the task went on the way it did; the records never steer it.
+      const record = (decision: TriageDecision["decision"], by: "meta" | "program", reason: string, requested: TriageDecision["decision"] | null = null) =>
+        this.o.ledger.append({
+          type: "task_decision",
+          taskId: task.id,
+          attempt: attempts,
+          failure: attempt.reason,
+          decision,
+          by,
+          requested,
+          reason,
+          fromModel: model,
+          toModel: decision === "stop" ? null : decision === "escalate" ? preset.roles.critical : model,
+        });
       this.reworks++;
-      if (this.reworks > limits.maxTotalReworks) return finish("failed", `rework limit reached: ${attempt.reason}`);
+      if (this.reworks > limits.maxTotalReworks) {
+        await record("stop", "program", `rework limit reached (${limits.maxTotalReworks} repairs per run)`);
+        return finish("failed", `rework limit reached: ${attempt.reason}`);
+      }
       if (this.o.singleModelTask) {
         // No coordinator to triage: the one task keeps repairing, without
         // guidance, until the run-wide rework limit above ends it. That
         // limit bounds a coordinated run's total repairs in the same way.
+        await record("repair", "program", "single model, no coordinator: the task repairs on its own model");
         previous = { model, diff: await diffAgainstBaseline(this.o.workspace, task.write_files), failure: attempt.evidence };
         guidance = null;
         continue;
@@ -594,13 +622,19 @@ class Run {
       const maxForTier = this.tierOf(model) === "strong" ? limits.strongAttemptsPerTask : limits.cheapAttemptsPerTask;
       const canRepair = tierAttempts < maxForTier;
       const canEscalate = attempt.category === "check" && !escalated && limits.maxEscalationsPerTask > 0 && this.tierOf(model) !== "strong";
-      if (!canRepair && !canEscalate) return finish("failed", `attempts exhausted: ${attempt.reason}`);
+      if (!canRepair && !canEscalate) {
+        await record("stop", "program", `attempts exhausted: ${tierAttempts} of ${maxForTier} on this model, no escalation allowed`);
+        return finish("failed", `attempts exhausted: ${attempt.reason}`);
+      }
 
-      const decision = await this.triage(task, model, attempt, canRepair, canEscalate);
+      const { decision, fallback } = await this.triage(task, model, attempt, canRepair, canEscalate);
       if (this.stopReason) return finish("stopped", this.stopReason);
       let next = decision.decision;
       if (next === "repair" && !canRepair) next = canEscalate ? "escalate" : "stop";
       if (next === "escalate" && !canEscalate) next = canRepair ? "repair" : "stop";
+      // Meta's choice counts as Meta's only when the program kept it.
+      const overridden = next !== decision.decision;
+      await record(next, fallback || overridden ? "program" : "meta", decision.reason, overridden ? decision.decision : null);
       if (next === "stop") return finish("failed", `coordinator stopped the task: ${decision.reason}`);
 
       // The next attempt continues from the current changes rather than
@@ -621,7 +655,7 @@ class Run {
     attempt: Extract<AttemptResult, { kind: "retry" }>,
     canRepair: boolean,
     canEscalate: boolean,
-  ): Promise<TriageDecision> {
+  ): Promise<{ decision: TriageDecision; fallback: boolean }> {
     const allowed = [canRepair && "repair", canEscalate && "escalate", "stop"].filter(Boolean).join(", ");
     const input = [
       `# Task ${task.id}: ${task.title}`,
@@ -630,14 +664,18 @@ class Run {
       `# Failure (${attempt.category})\n${attempt.reason}\n\n${attempt.evidence.slice(0, MAX_EVIDENCE_CHARS)}`,
       `# Allowed decisions\n${allowed}`,
     ].join("\n\n");
-    const result = await this.callCoordinator("rework", "triage", TriageDecision, "triage_decision", input);
-    if (result.ok) return result.data;
+    // Billed to the task, so its cost in the viewer includes Meta's triage.
+    const result = await this.callCoordinator("rework", "triage", TriageDecision, "triage_decision", input, task.id);
+    if (result.ok) return { decision: result.data, fallback: false };
     // Without a usable triage reply the program falls back to its own rule:
     // repair while attempts remain, then escalate.
     return {
-      decision: canRepair ? "repair" : "escalate",
-      reason: `triage unavailable (${result.failure}); program default`,
-      instructions: "",
+      decision: {
+        decision: canRepair ? "repair" : "escalate",
+        reason: `triage unavailable (${result.failure}); program default`,
+        instructions: "",
+      },
+      fallback: true,
     };
   }
 
@@ -812,6 +850,9 @@ class Run {
       return;
     }
     report.manifest = await snapshotManifest(this.o.workspace);
+    // Taken now, so the diff is exactly the version the holdout checks.
+    // Display only: if it fails, the holdout still runs.
+    report.changes = await this.delivered(true).catch(() => null);
 
     // Holdout checks run exactly once and their output never reaches a model.
     const holdout = await this.check(null, this.o.holdoutChecks, report.holdout);
@@ -824,6 +865,17 @@ class Run {
     if (!report.frozenIntact) {
       this.problems.push("the workspace changed while holdout checks ran; results are not valid for the frozen version");
     }
+  }
+
+  /** The workspace's changes against the baseline, cut at a line boundary when too long. */
+  private async delivered(frozen: boolean): Promise<NonNullable<RunReport["changes"]>> {
+    const diff = await diffAgainstBaseline(this.o.workspace);
+    // The visible tests of the groups present were copied in by the program;
+    // the viewer must not show them as model output.
+    const provided = groupTestPaths(this.o.checkGroups, [...this.presentGroups]);
+    if (diff.length <= MAX_DELIVERED_DIFF_CHARS) return { diff, truncated: false, frozen, provided };
+    const cut = diff.lastIndexOf("\n", MAX_DELIVERED_DIFF_CHARS);
+    return { diff: diff.slice(0, cut === -1 ? MAX_DELIVERED_DIFF_CHARS : cut + 1), truncated: true, frozen, provided };
   }
 
   // ---- 7: summarize -------------------------------------------------------------

@@ -101,6 +101,23 @@ const LedgerEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ ...base, type: z.literal("task_status"), taskId: z.string(), status: z.string(), detail: z.string().nullable() }),
   z.object({ ...base, type: z.literal("check_result"), taskId, check: z.string(), passed: z.boolean(), testsRun: Count.nullable() }),
+  // What happens to a task after a failed attempt, and who decided it: Meta
+  // (triage) or the program (limits, fallbacks, the single-model arm). Absent
+  // in ledgers written before it existed; readers must not require it.
+  z.object({
+    ...base,
+    type: z.literal("task_decision"),
+    taskId: z.string(),
+    attempt: z.number().int().positive(), // the failed attempt this decision follows
+    failure: z.string(),
+    decision: z.enum(["repair", "escalate", "stop"]),
+    by: z.enum(["meta", "program"]),
+    // Meta's own choice when the program replaced it with an allowed one.
+    requested: z.enum(["repair", "escalate", "stop"]).nullable(),
+    reason: z.string(),
+    fromModel: z.string(),
+    toModel: z.string().nullable(), // null when the task stops
+  }),
   z.object({ ...base, type: z.literal("run_finished"), status: z.enum(["completed", "incomplete", "interrupted"]), summary: z.string().nullable() }),
 ]);
 export type LedgerEvent = z.infer<typeof LedgerEventSchema>;
