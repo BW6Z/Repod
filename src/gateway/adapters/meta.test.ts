@@ -212,11 +212,19 @@ describe("helpers", () => {
     assert.equal(usage(10, "5"), null);
     assert.equal(usage(10, 5, 11), null, "more cached than total input");
     assert.equal(usage(10, 5, -1), null);
-    assert.equal(usage(10, 5, 0, 6), null, "more reasoning than total output");
     assert.equal(usage(10, 5, 0, 1.5), null);
+    assert.equal(usage(10, 5, 0, -1), null);
     assert.deepEqual(usage(10, 5, 10, 5) && { ...usage(10, 5, 10, 5), raw: undefined }, {
       inputTokens: 0, outputTokens: 5, cachedInputTokens: 10, reasoningTokens: 5, raw: undefined,
     });
+  });
+
+  test("more reasoning than total output keeps the cost and caps reasoning at the output", () => {
+    // Seen from Muse Glimmer on OpenRouter; its billed cost follows output_tokens.
+    const usage = normalizeUsage({ input_tokens: 45, output_tokens: 116, output_tokens_details: { reasoning_tokens: 118 } });
+    assert.equal(usage?.outputTokens, 116);
+    assert.equal(usage?.reasoningTokens, 116);
+    assert.equal(usage?.inputTokens, 45);
   });
 
   test("cached tokens are subtracted so they are not billed twice", () => {

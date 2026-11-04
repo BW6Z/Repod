@@ -150,6 +150,11 @@ The **Credit Terms** PDF linked from the Official Rules could not be read
 
 ## 2. Current implementation decisions
 
+- Every real run so far (2026-11-04) used `config/open-weights` on
+  OpenRouter, so the project ran on Meta's open-weight models only. The
+  README lists the models, where they ran, and every run's result. The
+  adapter's request was accepted for both models, as the README results show.
+
 - Theme: "Push the Frontier" (software): a Meta model coordinates a
   development request and routes the work.
 - The coordinator is a Meta model (enforced by config validation). The
@@ -190,10 +195,6 @@ The **Credit Terms** PDF linked from the Official Rules could not be read
 - Whether a paid hosted API such as OpenRouter counts as "compute you
   provide yourself" in the organizers' answer. It is likely, since Meta's
   own launch named such hosts, but the answer does not say.
-- Whether OpenRouter accepts the adapter's `/responses` request for these
-  models (strict JSON-schema output, `store: false`, reasoning effort).
-  The endpoint exists and both models list structured outputs, but no
-  request has been sent yet.
 - Whether non-Meta model APIs (such as Anthropic) are acceptable alongside
   Meta's models: neither forbidden nor confirmed.
 - Whether calling Meta's closed models (Muse Spark 1.3, Muse Wonder)

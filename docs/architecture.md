@@ -88,7 +88,10 @@ cli / web UI ──> orchestrator (state machine, owns all run state)
    "skipped".
 5. **Review**: tasks that require review (complex or high impact, or docs
    whose checks cannot run) are reviewed by the preset's review model. The
-   reviewer sees the diff of that task's write scope only.
+   reviewer sees the diff of that task's write scope only, the interface
+   contract (which wins over the task text Meta wrote), and the checks
+   that task passed, so it does not report as blocking what a passed check
+   already rules out (a first real run showed a false "tsc will fail").
    Blocking findings and findings that need a human decision leave the run
    incomplete; they are not fixed automatically yet.
 6. **Freeze**: only when every task passed. The dev checks run again on the
@@ -175,8 +178,10 @@ Meta is called 2 to 6 times per run in normal operation (plus triage).
 5. Settle the reservation: at list price when usage and rates are known,
    otherwise, or when the call failed after it may have been sent, at the
    full reservation. Usage that is not plausible (fractional or negative
-   counts, more cached than total input, more reasoning than total output)
-   counts as unknown. Only a failure with direct evidence that nothing left
+   counts, more cached than total input) counts as unknown. More reasoning
+   than total output, which Muse Glimmer on OpenRouter sometimes reports,
+   keeps the cost and caps reasoning at the output total. Only a failure with
+   direct evidence that nothing left
    the machine (a refused connection or an unresolved host name) releases
    the reservation and is logged with a cost of 0; a reset or dropped
    connection, or our own timeout, is billed.

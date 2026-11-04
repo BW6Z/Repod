@@ -215,7 +215,7 @@ code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; f
 .route-row {
   font: inherit;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -248,13 +248,14 @@ code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; f
 
 .block { padding: 14px; border-radius: 14px; background: var(--glass-inset); box-shadow: var(--highlight); }
 .block > p { margin-bottom: 10px; }
-.id { font-weight: 600; color: var(--muted); }
+/* Meta names tasks like "planner-core": the id column grows to fit instead of wrapping letter by letter. */
+.id { font-weight: 600; color: var(--muted); white-space: nowrap; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
 .title { font-weight: 500; }
 .cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 
 /* A plan as Meta proposed it. */
 .plan-list { display: grid; gap: 10px; }
-.plan-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; }
+.plan-row { display: grid; grid-template-columns: minmax(30px, max-content) minmax(0, 1fr); gap: 10px; }
 .plan-body { display: grid; gap: 2px; min-width: 0; }
 .plan-body .note { margin: 0; }
 
@@ -264,7 +265,7 @@ code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; f
 .task > summary {
   list-style: none;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -428,9 +429,9 @@ td:first-child { min-width: 10rem; }
   .run-tabs { margin: 0 -16px; padding: 0 8px; }
   .run-tab { padding: 8px 8px 9px; }
   .acceptance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .route-row { grid-template-columns: 26px minmax(0, 1fr) auto; }
+  .route-row { grid-template-columns: minmax(26px, max-content) minmax(0, 1fr) auto; }
   .route-row .cost { display: none; }
-  .task > summary { grid-template-columns: 26px minmax(0, 1fr); }
+  .task > summary { grid-template-columns: minmax(26px, max-content) minmax(0, 1fr); }
   .task .state { grid-column: 2; justify-items: start; }
   .task-body { padding-left: 12px; }
 }

@@ -57,7 +57,7 @@ Reply with one JSON object matching the schema. For each real problem add a find
 - severity "minor": style, naming or small improvements.
 - snippet: the exact code the finding is about. evidence: why it is a problem. suggested_check: a test or command that would confirm it.
 
-Do not report style as blocking. If there are no problems, return an empty findings list. Summarize your overall judgement in "summary".`;
+The interface contract in the input is authoritative: where the task text and the contract disagree (a name, a signature, an error code), the contract wins, so code that follows the contract is not blocking for that difference; mention the disagreement as minor. The input lists the checks this change already passed. Do not report as blocking a problem one of those checks would have caught: when the type check passed, the code compiles with the project's settings (including its import style), so a suspected type or import error is not blocking. Do not report style as blocking. If there are no problems, return an empty findings list. Summarize your overall judgement in "summary".`;
 
 const SUMMARIZE = `You are the coordinator of Repod. The run has finished. Write the closing message for the user as one JSON object matching the schema, in the language of the user's request.
 

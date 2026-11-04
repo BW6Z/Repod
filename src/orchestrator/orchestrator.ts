@@ -139,6 +139,11 @@ const RUN_STOPPING: ReadonlySet<FailureKind> = new Set(["budget", "quota", "reje
 const ENVIRONMENT_FAILURES = new Set(["spawn_error", "no_tests"]);
 
 const MAX_EVIDENCE_CHARS = 8000;
+// What a passed check proves, in the reviewer's words; a name not listed is shown as is.
+const CHECK_DESCRIPTIONS: Record<string, string> = {
+  typecheck: "typecheck: tsc -p tsconfig.json over the whole workspace, with the project's own compiler settings, reported no errors",
+  [VISIBLE_TESTS]: "visible-tests: node --test ran this task's visible tests and those of finished tasks; all passed",
+};
 // The delivered diff is kept in the report for the viewer; a runaway output
 // must not make the report unreadable.
 const MAX_DELIVERED_DIFF_CHARS = 200_000;
@@ -156,6 +161,10 @@ class Run {
   private runningTask: string | null = null;
   // Check groups whose test files are in the workspace right now.
   private readonly presentGroups = new Set<string>();
+  // The checks each task's last attempt passed, shown to its reviewer. Without
+  // them a reviewer guessed that tsc would fail on code the type check had
+  // already accepted and reported it as blocking.
+  private readonly passedChecks = new Map<string, string[]>();
   // null once any call in the phase had an unknown cost.
   private readonly phaseCost: Record<CostPhase, number | null> = { coordination: 0, execution: 0, rework: 0, review: 0 };
 
@@ -802,6 +811,7 @@ class Run {
       const missing = result.failure === "missing_tests" ? `only ${result.testsRun ?? 0} of ${spec.expectedTests} tests ran; a test file crashed or the process exited early\n` : "";
       if (!result.passed) failures.push(`## ${result.name} (${result.failure})\n${missing}${result.output.slice(0, MAX_EVIDENCE_CHARS)}`);
     }
+    if (failures.length === 0 && taskId) this.passedChecks.set(taskId, specs.map((s) => s.name));
     return failures.length === 0
       ? { kind: "passed" }
       : { kind: "retry", category: "check", reason: `${failures.length} of ${specs.length} checks failed`, evidence: failures.join("\n\n") };
@@ -823,8 +833,13 @@ class Run {
         `# Task ${task.id}: ${task.title}`,
         task.description,
         `# Acceptance criteria\n${task.acceptance.map((a) => `- ${a}`).join("\n")}`,
+        // The same contract the executor followed. Meta's task text once named
+        // an error class the spec does not have, and a reviewer without the
+        // contract judged the correct code against that wrong name.
+        `# Interface contract (authoritative over the task text above)\n${this.o.contract}`,
         `# Files this task changed\n${task.write_files.join(", ")}`,
         `# Diff of these files against the baseline\n\`\`\`diff\n${diff}\n\`\`\``,
+        `# Checks this change passed\n${(this.passedChecks.get(task.id) ?? []).map((name) => `- ${CHECK_DESCRIPTIONS[name] ?? name}`).join("\n") || "- none recorded"}`,
       ].join("\n\n");
       const result = await this.callModel("review", "reviewer", this.o.preset.roles.review, "review", ReviewOutput, "review_output", input, task.id);
       if (!result.ok) {

@@ -677,4 +677,20 @@ describe("runPipeline: review", () => {
     assert.equal(gateway.calls("review_output")[0]?.model, "muse-wonder-1.0");
     assert.match(report.problems.join("\n"), /blocking review finding/);
   });
+
+  test("the reviewer is told which checks the task passed", async () => {
+    const gateway = new ScriptedGateway({
+      plan_response: [plan(task("T1", { complexity: "complex", impact: "high", model: "muse-wonder-1.0" }))],
+      executor_output: [writes({ "src/math.ts": WITH_MUL })],
+      review_output: [{ summary: "Fine.", findings: [] }],
+      run_summary: [summary],
+    });
+    await run(gateway);
+    const input = gateway.calls("review_output")[0]?.input ?? "";
+    assert.match(input, /# Checks this change passed/);
+    assert.match(input, /- typecheck: tsc -p tsconfig\.json/);
+    assert.match(input, /- visible-tests: /);
+    // The contract the executor followed, so the task text cannot override it.
+    assert.match(input, /# Interface contract \(authoritative over the task text above\)\nFunctions take and return numbers\./);
+  });
 });

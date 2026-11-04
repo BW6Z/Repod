@@ -215,28 +215,32 @@ const isCount = (value: unknown): value is number => Number.isSafeInteger(value)
  * Converts Meta usage to the gateway convention (inputTokens = uncached only).
  *
  * Usage that is not plausible returns null, and the gateway then bills the
- * full reservation: a count that is negative, fractional or missing, or one
- * that contradicts the convention below (more cached than total input, more
- * reasoning than total output). Such values would otherwise produce a wrong
- * or negative cost, or a ledger line that cannot be read back.
+ * full reservation: a count that is negative, fractional or missing, or more
+ * cached than total input. Such values would otherwise produce a wrong or
+ * negative cost, or a ledger line that cannot be read back.
  *
- * TODO: Meta's docs do not say whether input_tokens already includes
- * cached_tokens. This follows the OpenAI Responses convention (included) and
- * subtracts it; verify with the first probe call that hits the cache. If
- * cached tokens turn out to be reported separately, the "cached <= input"
- * check must change with it.
+ * More reasoning than total output is the exception: Muse Glimmer on
+ * OpenRouter sometimes reports it (seen: 118 reasoning of 116 output), while
+ * OpenRouter's own cost matches output_tokens. Reasoning is informational and
+ * not billed separately, so it is capped at the output total instead of
+ * discarding a usable cost.
+ *
+ * input_tokens includes cached_tokens: confirmed on OpenRouter, whose reported
+ * cost matched this subtraction exactly. TODO: confirm the same on the Meta
+ * Model API with its first call that hits the cache; if Meta reports cached
+ * tokens separately, the "cached <= input" check must change with it.
  */
 export function normalizeUsage(usage: ResponsesBody["usage"]): Usage | null {
   if (!usage || !isCount(usage.input_tokens) || !isCount(usage.output_tokens)) return null;
   const cached = usage.input_tokens_details?.cached_tokens ?? 0;
   const reasoning = usage.output_tokens_details?.reasoning_tokens ?? null;
   if (!isCount(cached) || cached > usage.input_tokens) return null;
-  if (reasoning !== null && (!isCount(reasoning) || reasoning > usage.output_tokens)) return null;
+  if (reasoning !== null && !isCount(reasoning)) return null;
   return {
     inputTokens: usage.input_tokens - cached,
     outputTokens: usage.output_tokens, // reasoning tokens are counted within this total
     cachedInputTokens: cached,
-    reasoningTokens: reasoning,
+    reasoningTokens: reasoning === null ? null : Math.min(reasoning, usage.output_tokens),
     raw: usage,
   };
 }

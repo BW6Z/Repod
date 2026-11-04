@@ -57,15 +57,18 @@ during the building period. The first commit is dated 2026-10-30, and the
 git history shows each step. Only the open-source dependencies `zod`,
 `typescript` and `@types/node` come from outside.
 
-**Verified so far.** See the status table below. The pipeline, the checks,
-the experiment and the viewer are tested offline and rehearsed end to end
-against a local fake API. Results from real model runs have not been
-published yet.
+**Verified so far.** On 2026-11-04 the whole pipeline ran against real
+models: Meta's open-weight Muse Spark Open and Muse Glimmer 30B on
+OpenRouter. Every recorded run is listed under
+[Results from real runs](#results-from-real-runs), including the ones that
+failed. The Meta Model API itself has not been called yet. See the status
+table below for each part.
 
 ## Status
 
-The pipeline is implemented and tested offline; it has not yet run against
-real models. Do not treat planned items as working features.
+The pipeline is implemented, tested offline, and has run end to end against
+real models on OpenRouter (Meta's open-weight models). It has not run on the
+Meta Model API yet. Do not treat planned items as working features.
 
 | Area | Status |
 |---|---|
@@ -74,29 +77,29 @@ real models. Do not treat planned items as working features.
 | JSONL event ledger (`src/gateway/ledger.ts`) | Implemented, tested |
 | Model output schemas and strict JSON Schema check (`src/orchestrator/schemas.ts`, `src/gateway/json-schema.ts`) | Implemented, tested |
 | Model gateway: retries, one format repair, failure classification (`src/gateway/gateway.ts`) | Implemented, tested with a fake adapter |
-| Meta Model API adapter (`src/gateway/adapters/meta.ts`) | Implemented, tested with mocked HTTP only; **not yet verified against the live API** |
-| Meta open-weight models on OpenRouter (`config/open-weights`, chosen with `REPOD_CONFIG_DIR`) | Config validated and tested; **not yet run against OpenRouter** |
+| Meta Model API adapter (`src/gateway/adapters/meta.ts`), also used for OpenRouter | Implemented, tested; **verified live against OpenRouter** (strict JSON schema, `store: false`, reasoning effort; computed cost matched OpenRouter's own figure); not yet called on the Meta Model API |
+| Meta open-weight models on OpenRouter (`config/open-weights`, chosen with `REPOD_CONFIG_DIR`) | Implemented, tested; **used for every real run so far** |
 | Anthropic adapter | Planned, optional (deadline build uses Meta models only) |
 | CLI `check-config`, `spend` | Implemented |
-| CLI `probe` | Implemented, not yet run against the live API |
+| CLI `probe` | Implemented; run live on OpenRouter for both models |
 | Capability floor with free/cheap/strong tiers; presets limit which models may execute (`src/orchestrator/routing.ts`) | Implemented, tested |
 | Check and review requirements per task type (`reviewRequirement`) | Implemented, tested, applied by the pipeline |
 | Check groups: each task is checked with its own visible tests and those of finished tasks; a failed task's files and tests are rolled back (`src/orchestrator/check-groups.ts`) | Implemented, tested |
 | Plan validation: ids, dependencies, cycles, context files, models, budget warning (`src/orchestrator/plan-validation.ts`) | Implemented, tested |
 | Executor input assembly and context versioning (`src/orchestrator/context.ts`) | Implemented, tested |
 | Repository summary for planning (`src/workspace/summary.ts`) | Implemented, tested |
-| Pipeline: planning with clarifying questions and one plan revision, execution with repair and one escalation, review, freeze, summary (`src/orchestrator/orchestrator.ts`) | Implemented, tested end to end with a scripted fake gateway and real checks; **not yet run with real models** |
-| System prompts (`src/orchestrator/prompts.ts`) | First versions; to be tuned against real model behavior |
+| Pipeline: planning with clarifying questions and one plan revision, execution with repair and one escalation, review, freeze, summary (`src/orchestrator/orchestrator.ts`) | Implemented, tested end to end with a scripted fake gateway and real checks; **run with real models** (see results) |
+| System prompts (`src/orchestrator/prompts.ts`) | First versions; the reviewer prompt was corrected after the first real runs (see results) |
 | Write scope per task, pre-write freshness check, tainted workspaces (`src/workspace`) | Implemented, tested |
-| CLI `run`: the demo request on a copy of the sample repo, interactive or `--experiment` | Implemented; **not yet run with real models** |
-| CLI `experiment`: arms A (one strong model, no coordinator), B and C in rounds, with per-run reports and a median/range summary (`src/eval/experiment.ts`) | Implemented, tested with a scripted gateway and real checks; **not yet run with real models** |
+| CLI `run`: the demo request on a copy of the sample repo, interactive or `--experiment` | Implemented; run with real models |
+| CLI `experiment`: arms A (one strong model, no coordinator), B and C in rounds, with per-run reports and a median/range summary (`src/eval/experiment.ts`) | Implemented, tested; run with real models, one run per arm at a time (see results) |
 | Run workspace, path allowlist, diff, hashing (`src/workspace`) | Implemented, tested (Windows paths with spaces, junction escapes, links into protected folders) |
 | Check runner (`src/verifier`) | Implemented, tested (timeouts kill the process tree; API keys withheld) |
 | Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
 | Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
 | Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
 | Run viewer: local page showing each run in tabs (live while it runs): an overview with an acceptance summary, the conversation with Meta, each task's attempts and who decided what after a failure, and the delivered diff; cost against one strong model from experiment results, and experiment results, each marked with where its data came from (Meta Model API, a rehearsal, or not recorded) and flagged when it is not a formal experiment or rests on fewer than three runs per arm (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
-| Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented, tested with a fake Meta API; **not yet run with real models** |
+| Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented; run with real models (three demo runs) |
 | Static replay export: recorded runs as static files anyone can open without a key; local paths and holdout output removed (`export`; `src/server/replay.ts`) | Implemented, tested on rehearsal data; nothing published yet |
 | Free-form requests on the page | Planned |
 
@@ -113,7 +116,9 @@ cp .env.example .env   # fill in keys locally; never commit .env
 ```
 
 Local `.env` and `.env.*` files are ignored, with `.env.example` kept as the
-shared template. Dependencies, run artifacts, logs, `dist/` build output and
+shared template. Private keys, certificate containers and common local
+credential files are ignored, as are all files under `eval/holdout/` except
+its README. Dependencies, run artifacts, logs, `dist/` build output and
 OS-generated metadata are also ignored. Keep `package-lock.json` tracked for
 reproducible installs. Ignore rules do not remove files already tracked by Git.
 
@@ -279,6 +284,101 @@ announces it on every command. Executor output is
 limited to 16,000 tokens there, because OpenRouter serves Muse Glimmer with at
 most 16,384. Every run records `https://openrouter.ai` as its model API, and
 the viewer labels it OpenRouter.
+
+## Results from real runs
+
+All runs below used `config/open-weights` on OpenRouter on 2026-11-04, on
+the fixed demo request. Holdout is the number of the 31 hidden tests that
+passed on the frozen result. Costs are at list price, as recorded by Repod;
+for these models they matched OpenRouter's own cost figures. Each experiment
+ran one run per arm, so none of this is a statistical result.
+
+Experiments (arm A: Muse Spark Open alone, no coordinator; arm B: Repod with
+Muse Spark Open in every role; arm C: Repod's `saving` preset, with Muse
+Glimmer for routine work):
+
+| Experiment | Arm | Status | Holdout | Cost | Note |
+|---|---|---|---|---|---|
+| 1 | A | completed | 31/31 | $0.0413 | one attempt |
+| 1 | C | incomplete | 31/31 | $0.0980 | reviewer claimed `tsc` would fail on `.ts` imports, although the type check had passed |
+| 2 | A | completed | 31/31 | $0.1563 | three repairs before it passed |
+| 2 | C | incomplete | 31/31 | $0.0975 | Meta's plan named an error class the spec does not have; the reviewer judged correct code against it |
+| 3 | A | incomplete | not run | $0.0692 | the output hit the 16,000-token executor cap, which `config/open-weights` sets for Muse Glimmer but applies to every model |
+| 3 | C | incomplete | 31/31 | $0.1263 | reviewer could not verify two points against SPEC.md and left them for a human |
+| 4 | B | completed | 31/31 | $0.1491 | strong model everywhere; review $0.043 of it |
+
+The reviewer was changed between experiments 1 and 2, and again between 2
+and 3, after each problem above. Experiment 4 used the same code as 3.
+
+- it now sees the checks the task passed;
+- it now sees the interface contract, which wins over Meta's task text.
+
+Arm A never runs a reviewer, so those changes do not affect it.
+
+Demo runs started from the page (arm C setup, with the user approving the
+plan):
+
+| Run | Status | Holdout | Cost | Note |
+|---|---|---|---|---|
+| `run-2026-11-04T23-07-29-042Z` | completed | 31/31 | $0.1653 | one repair each on the planner and on the docs task (Muse Glimmer) |
+| `run-2026-11-04T23-19-49-378Z` | incomplete | not run | $0.1141 | the CLI task asked twice for files it was supposed to create; it was already on the strong model, so it stopped |
+| `run-2026-11-04T23-23-12-584Z` | completed | 31/31 | $0.0902 | one repair on the docs task (Muse Glimmer) |
+
+What this shows so far:
+
+- Quality held whenever a run finished its tasks: every frozen result that
+  reached the holdout passed 31 of 31.
+- Arm A's cost varied from $0.041 to $0.156, depending on how many repairs
+  it needed. Arm C stayed between $0.090 and $0.165.
+- With the same pipeline, the strong model in every role (arm B) cost
+  $0.149. Routing routine work to Muse Glimmer (arm C, latest code) cost
+  $0.090 and $0.126, and $0.165 in a run that needed two repairs.
+- On this small request, coordination and review cost about as much as
+  routing saved against one strong model alone. Whether routing pays off on
+  larger requests is not measured yet.
+
+## Known limitations
+
+- The adapter has run live only against OpenRouter, where `input_tokens`
+  includes cached tokens (confirmed by OpenRouter's own cost). On the Meta
+  Model API this, and the meaning of an `incomplete` status, are still
+  assumptions.
+- Muse Glimmer on OpenRouter sometimes reports more reasoning tokens than
+  output tokens. Repod caps reasoning at the output total, because billing
+  follows the output total.
+- `config/open-weights` caps executor output at 16,000 tokens for every
+  model, because OpenRouter serves Muse Glimmer with at most 16,384. A
+  single model that writes the whole feature in one reply can hit that cap
+  (experiment 3, arm A). A per-model cap would remove this.
+- The reviewer is conservative. Findings it cannot verify leave the run
+  incomplete for a human to decide, even when the holdout passes. Blocking
+  findings are reported, not fixed automatically.
+- The request is fixed: its checks, visible tests and holdout tests were
+  written for it. Free-form requests need a sandbox and generated checks and
+  are planned.
+- Spend figures are list-price estimates. A call whose usage cannot be read
+  is billed at its full reservation, so the recorded total can be higher
+  than the provider's bill.
+- Paid commands run one at a time (see the paid-run lock above); there is no
+  shared budget for concurrent runs.
+- Running checks on model-written code is not sandboxed beyond a separate
+  working copy, an allowlisted environment without API keys, and a timeout
+  that kills the whole process tree. Network and filesystem access are not
+  restricted. Git in the run workspace ignores system and global config,
+  system attributes and the user's own ignore and attributes files, and has
+  fsmonitor, hooks and signing disabled, but model-written code could still
+  define git filters in the workspace's own `.git/config`; they would run
+  without API keys. Repod is not a safe platform for running arbitrary code
+  and only runs its bundled sample.
+- Holdout tests and the reference implementation used to validate them are
+  kept outside this public repository, so the experiment cannot be rerun
+  from a fresh clone yet.
+- Running time of the sample's 20,000-task cases is not a pass condition and
+  is not reported yet.
+- Competition compliance is checked against the Participant Guide, the
+  event page and the Official Rules; the Credit Terms and several questions
+  (such as other providers' models) are still open. See
+  `docs/compliance.md`.
 
 ## License
 
