@@ -24,7 +24,6 @@ import { parseCommand, type CommandOptions } from "./args.ts";
 import { terminalHooks } from "./interactive.ts";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
-const configDir = path.join(repoRoot, "config");
 
 /**
  * Local settings come from .env (gitignored), with the shell environment as
@@ -40,6 +39,13 @@ function localSetting(name: string): string {
 // REPOD_RUNS_DIR lets a rehearsal against a local fake API keep its runs,
 // and their spend, apart from the real ones.
 const runsDir = path.resolve(repoRoot, localSetting("REPOD_RUNS_DIR") || "runs");
+
+// REPOD_CONFIG_DIR swaps the whole model setup (presets, prices, limits) at
+// once, for example to config/open-weights when Meta's open-weight models run
+// on another host. Preset names stay the same, so the experiment arms and the
+// page keep working; the folder is announced because it decides what is paid.
+const configDir = path.resolve(repoRoot, localSetting("REPOD_CONFIG_DIR") || "config");
+if (localSetting("REPOD_CONFIG_DIR")) console.warn(`Using the config in ${configDir} (REPOD_CONFIG_DIR)`);
 
 /**
  * The Meta adapter for paid commands. MODEL_API_BASE_URL points it at another
@@ -372,7 +378,7 @@ async function view(options: CommandOptions): Promise<number> {
     server.listen(options.port, "127.0.0.1", resolve);
   });
   console.log(`Run viewer: http://127.0.0.1:${options.port}/  (runs from ${path.relative(repoRoot, runsDir) || runsDir}; Ctrl+C to stop)`);
-  if (session) console.log("Interactive: the page can start paid runs of the demo request with your Meta key.");
+  if (session) console.log("Interactive: the page can start paid runs of the demo request with the key in MODEL_API_KEY.");
   // Keeps serving until the process is stopped.
   await new Promise<never>(() => {});
   return 0;

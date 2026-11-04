@@ -11,6 +11,9 @@ Sources of the verified items below:
   Overview and Event Waiver" (`.../meta-ai-developer-hackathon/waiver`),
   read on 2026-11-03.
 
+One organizer answer from the event Discord is recorded separately below;
+it is not part of the Official Rules.
+
 The **Credit Terms** PDF linked from the Official Rules could not be read
 (its signed link had expired). This is not a claim of full compliance.
 
@@ -88,6 +91,18 @@ The **Credit Terms** PDF linked from the Official Rules could not be read
   - Modal: $100, through Endpoints.
   - Fireworks: $100.
 
+### From the organizers on Discord
+
+- In the `credit-requests` channel, another participant asked whether
+  projects built on Muse Glimmer or Muse Spark Open are eligible. The
+  verified Cerebral Valley app answered on 2026-11-03:
+  - such projects are eligible;
+  - neither the Meta Model API nor a payment method is needed;
+  - the models run "on compute you provide yourself";
+  - the README and the demo must say which open Meta models are used and
+    where they run.
+- Seen through a screenshot of that thread, not in the rules documents.
+
 ### From the Participant Guide
 
 - **Theme:** the project must build towards one of two problem statements,
@@ -145,10 +160,14 @@ The **Credit Terms** PDF linked from the Official Rules could not be read
 - Executors could come from other providers through adapters, but none is
   used. The Official Rules do not forbid other models, but they do not
   confirm them either, so the deadline build stays Meta-only.
-- No preset uses Meta's open-weight models (Muse Spark Open, Muse Glimmer)
-  or a partner host yet. That would be the fallback if the Meta Model API
-  credits are not available: the partner credits cover exactly those
-  models, and the guide's stage-one wording accepts them.
+- The Meta Model API credits had not arrived by 2026-11-04, so
+  `config/open-weights` sets up the same presets with Meta's open-weight
+  models only, served by OpenRouter (chosen with `REPOD_CONFIG_DIR`):
+  - Muse Spark Open: the coordinator, critical work and review;
+  - Muse Glimmer 30B: routine code and docs.
+  Both are named in the guide, and the organizers' answer above accepts
+  open-weight models. As that answer asks, the README and the demo name
+  the models and say they run on OpenRouter.
 - Claude and OpenAI models are only reachable through API keys; consumer
   subscriptions are not used as a model source. Contributor-mode models are
   not used. Responses are requested with `store: false`.
@@ -168,9 +187,13 @@ The **Credit Terms** PDF linked from the Official Rules could not be read
 - The Credit Terms (Meta Model API credits) have not been read.
 - How to claim the Baseten, Modal and Fireworks credits, and whether this
   team was selected for them.
-- Whether those hosts serve Muse Spark Open and Muse Glimmer through an
-  OpenAI-style `/responses` endpoint with strict JSON-schema output, which
-  the Meta adapter relies on. This has not been tried.
+- Whether a paid hosted API such as OpenRouter counts as "compute you
+  provide yourself" in the organizers' answer. It is likely, since Meta's
+  own launch named such hosts, but the answer does not say.
+- Whether OpenRouter accepts the adapter's `/responses` request for these
+  models (strict JSON-schema output, `store: false`, reasoning effort).
+  The endpoint exists and both models list structured outputs, but no
+  request has been sent yet.
 - Whether non-Meta model APIs (such as Anthropic) are acceptable alongside
   Meta's models: neither forbidden nor confirmed.
 - Whether calling Meta's closed models (Muse Spark 1.3, Muse Wonder)

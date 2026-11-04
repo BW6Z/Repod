@@ -1,0 +1,16 @@
+{
+  "name": "saving",
+  "description": "Cost-first, Meta open-weight models only: Muse Spark Open coordinates and takes critical work and review; Muse Glimmer does routine code and docs.",
+  "coordinator": "meta/muse-spark-open",
+  "roles": {
+    "critical": "meta/muse-spark-open",
+    "routine": "meta/muse-glimmer-30b",
+    "review": "meta/muse-spark-open",
+    "docs": "meta/muse-glimmer-30b"
+  },
+  "allowFreeModels": false,
+  "models": [
+    { "id": "meta/muse-glimmer-30b", "provider": "meta", "tier": "cheap" },
+    { "id": "meta/muse-spark-open", "provider": "meta", "tier": "strong" }
+  ]
+}

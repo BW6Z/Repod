@@ -1,0 +1,16 @@
+{
+  "name": "quality",
+  "description": "Quality-first, Meta open-weight models only: every executor role uses Muse Spark Open. Same plan, context rules and checks as 'saving', so it doubles as experiment arm B.",
+  "coordinator": "meta/muse-spark-open",
+  "roles": {
+    "critical": "meta/muse-spark-open",
+    "routine": "meta/muse-spark-open",
+    "review": "meta/muse-spark-open",
+    "docs": "meta/muse-spark-open"
+  },
+  "allowFreeModels": false,
+  "models": [
+    { "id": "meta/muse-glimmer-30b", "provider": "meta", "tier": "cheap" },
+    { "id": "meta/muse-spark-open", "provider": "meta", "tier": "strong" }
+  ]
+}

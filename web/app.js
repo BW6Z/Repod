@@ -48,8 +48,14 @@ const when = (ts) => (ts ? new Date(ts).toLocaleString([], { month: "short", day
 const STATUS_CLASS = { passed: "ok", completed: "ok", running: "live", "waiting for you": "live", failed: "bad", stopped: "bad", incomplete: "bad", interrupted: "bad", skipped: "warn" };
 const statusText = (status) => el("span", { class: `status ${STATUS_CLASS[status] ?? ""}` }, status);
 
-// The Meta Model API's origin (META_BASE_URL in src/gateway/adapters/meta.ts).
-const META_API = "https://api.meta.ai";
+// Model APIs whose data counts as real: the Meta Model API (META_BASE_URL in
+// src/gateway/adapters/meta.ts) and OpenRouter, which serves Meta's
+// open-weight models for config/open-weights.
+const REAL_APIS = new Map([
+  ["https://api.meta.ai", "Meta Model API"],
+  ["https://openrouter.ai", "OpenRouter"],
+]);
+const isLocalApi = (endpoint) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|$)/.test(endpoint);
 
 /**
  * Where a run's or an experiment's model calls went, as [text, warn]. Data
@@ -58,11 +64,11 @@ const META_API = "https://api.meta.ai";
  */
 function dataSource(endpoint) {
   if (!endpoint) return ["model API not recorded", false];
-  if (endpoint === META_API) return ["Meta Model API", false];
+  if (REAL_APIS.has(endpoint)) return [REAL_APIS.get(endpoint), false];
   const host = endpoint.replace(/^https?:\/\//, "");
-  return /^(127\.0\.0\.1|localhost|\[::1\])(:|$)/.test(host)
+  return isLocalApi(endpoint)
     ? [`rehearsal against a local fake API (${host})`, true]
-    : [`${host}, not the Meta Model API`, true];
+    : [`${host}, not a known model API`, true];
 }
 const sourceNote = (endpoint, prefix = "") => {
   const [text, warn] = dataSource(endpoint);
@@ -284,7 +290,7 @@ function historyColumn() {
           return el("li", {}, el("button", { type: "button", "aria-current": String(r.id === state.runId), title: r.id, onclick: () => openRun(r.id) },
             el("span", { class: "t" }, el("span", { class: `dot ${dot}` }), name),
             el("span", { class: "s num" }, [when(r.startedAt) || r.id, r.kind === "probe" ? null : r.status, r.costUsd !== null ? usd(r.costUsd) : null,
-              r.endpoint && r.endpoint !== META_API ? "rehearsal" : null].filter(Boolean).join(" · "))));
+              r.endpoint && isLocalApi(r.endpoint) ? "rehearsal" : r.endpoint && !REAL_APIS.has(r.endpoint) ? "unknown API" : null].filter(Boolean).join(" · "))));
         }))
       : empty("No runs yet."),
     state.source ? el("p", { class: "note" }, state.source) : null);
@@ -759,7 +765,7 @@ function renderNewRun() {
     message("user", "You", el("p", { class: "request" }, session.request)),
     el("p", { class: "note" }, "This build runs the demo request on a copy of the sample library; the request is fixed so its tests apply."),
     el("label", { class: "field" }, el("span", {}, "Preset"), preset),
-    el("p", { class: "note raised" }, "Costs real money: every model call is billed to your Meta key, within the budgets in config/limits.json."),
+    el("p", { class: "note raised" }, "Costs real money: every model call is billed to the key in MODEL_API_KEY, within the budgets in config/limits.json."),
     busy ? el("p", { class: "row" }, "A run started from this page is in progress.",
       el("button", { type: "button", class: "link", onclick: () => openRun(session.runId) }, "Open it")) : null,
     el("div", { class: "buttons" }, start), errorLine);

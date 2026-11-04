@@ -11,6 +11,57 @@ The goal is to make the cost and quality trade-off visible, controllable and
 verifiable. Whether routing actually saves money is a question for the
 experiment in `eval/`, not a claim this project makes in advance.
 
+## For judges
+
+**The problem.** Coding with one strong model is reliable but expensive.
+Cheap models are often good enough, but nobody knows in advance which tasks
+are safe to give them, and a wrong guess costs a failed change.
+
+**What Repod does.** You make one request. A Meta model then plans the work
+with you: it asks clarifying questions, proposes tasks, and labels each
+task's complexity and impact. You approve the plan. After that:
+
+1. **Routing.** Each task goes to a cheap or a strong model. The program
+   enforces a floor, so complex or high-impact work always gets a strong
+   model, whatever the coordinator chose.
+2. **Checks.** Fixed checks run after every task: type check, the task's
+   visible tests, and docs and example checks.
+3. **Failures.** When a task fails its checks, Meta decides whether to
+   repair it on the same model, escalate it to the strong model, or stop.
+   The program can override that decision, and the log records who decided
+   and why.
+4. **Results.** The result is frozen and run against holdout tests the
+   models never saw. Every call's tokens and cost are recorded.
+
+**How to judge it.** The `experiment` command runs the same request three
+ways, with the same checks and holdout tests:
+
+- arm A: one strong model alone;
+- arm B: Repod with strong models only;
+- arm C: Repod with cheap and strong models.
+
+It reports the holdout pass rate and the cost of each arm. Whether arm C
+saves money at the same quality is measured, not assumed.
+
+**Meta models used and where they run.** The coordinator is always a Meta
+model. There are two setups; each run records which API it called, and the
+viewer shows it.
+
+| Setup | Models | Runs on |
+|---|---|---|
+| `config/` (default) | Muse Spark 1.3 (coordinator, routine work), Muse Wonder 1.0 (critical work, review) | Meta Model API |
+| `config/open-weights/` | Muse Spark Open (coordinator, critical work, review), Muse Glimmer 30B (routine work, docs), both open-weight | OpenRouter |
+
+**Built during the Hackathon.** Everything in this repository was written
+during the building period. The first commit is dated 2026-10-30, and the
+git history shows each step. Only the open-source dependencies `zod`,
+`typescript` and `@types/node` come from outside.
+
+**Verified so far.** See the status table below. The pipeline, the checks,
+the experiment and the viewer are tested offline and rehearsed end to end
+against a local fake API. Results from real model runs have not been
+published yet.
+
 ## Status
 
 The pipeline is implemented and tested offline; it has not yet run against
@@ -24,6 +75,7 @@ real models. Do not treat planned items as working features.
 | Model output schemas and strict JSON Schema check (`src/orchestrator/schemas.ts`, `src/gateway/json-schema.ts`) | Implemented, tested |
 | Model gateway: retries, one format repair, failure classification (`src/gateway/gateway.ts`) | Implemented, tested with a fake adapter |
 | Meta Model API adapter (`src/gateway/adapters/meta.ts`) | Implemented, tested with mocked HTTP only; **not yet verified against the live API** |
+| Meta open-weight models on OpenRouter (`config/open-weights`, chosen with `REPOD_CONFIG_DIR`) | Config validated and tested; **not yet run against OpenRouter** |
 | Anthropic adapter | Planned, optional (deadline build uses Meta models only) |
 | CLI `check-config`, `spend` | Implemented |
 | CLI `probe` | Implemented, not yet run against the live API |
@@ -160,6 +212,9 @@ docs/          architecture and compliance notes
   training. Both shipped presets use Meta models only: `muse-spark-1.3`
   coordinates and handles routine work, `muse-wonder-1.0` handles critical
   work and review (`saving`), or every executor role (`quality`).
+- `config/open-weights/`: the same two presets with Meta's open-weight
+  models only, for when the Meta Model API is not available. It has its own
+  prices and limits (see below).
 - Routing: Meta labels each task's complexity and impact and picks a model.
   The program enforces a floor (high impact or complex: strong; medium:
   cheap; simple and low impact: free if allowed) and replaces a choice below
@@ -192,38 +247,38 @@ Two optional settings exist for rehearsing against a local fake of the Meta
 API: `MODEL_API_BASE_URL` sends requests (and the key) to another address,
 and the CLI announces it on every paid command; `REPOD_RUNS_DIR` (relative
 to the repository) keeps those runs and their spend apart from the real
-ones, for example `runs/rehearsal`. Leave both unset for real runs.
+ones, for example `runs/rehearsal`. Leave both unset for real runs on the
+Meta Model API.
 
-## Known limitations
+### Meta's open-weight models on OpenRouter
 
-- The Meta adapter has only been tested against mocked responses based on
-  Meta's documentation. Two details are assumptions until a live call
-  confirms them: whether `input_tokens` includes cached tokens, and that an
-  `incomplete` status means the output token limit was hit.
-- Spend figures are list-price estimates. Hackathon credits are not tracked
-  as a separate balance.
-- Paid commands run one at a time (see the paid-run lock above); there is no
-  shared budget for concurrent runs.
-- Running checks on model-written code is not sandboxed beyond a separate
-  working copy, an allowlisted environment without API keys, and a timeout
-  that kills the whole process tree. Network and filesystem access are not
-  restricted. Git in the run workspace ignores system and global config,
-  system attributes and the user's own ignore and attributes files, and has
-  fsmonitor, hooks and signing disabled, but model-written code could
-  still define git filters in the workspace's own `.git/config`; they would
-  run without API keys. Repod is not a safe
-  platform for running arbitrary code and only runs its bundled sample.
-- Blocking review findings are reported and leave the run incomplete; they
-  are not fixed automatically yet.
-- Holdout tests and the reference implementation used to validate them are
-  kept outside this public repository until the experiments are over, so
-  they cannot be checked out from here yet.
-- Running time of the sample's 20,000-task cases is not a pass condition and
-  is not reported yet.
-- Competition compliance is checked against the Participant Guide, the
-  event page and the Official Rules; the Credit Terms and several questions
-  (such as other providers' models) are still open. See
-  `docs/compliance.md`.
+When the Meta Model API cannot be used, Repod can run on Meta's open-weight
+models instead. The organizers confirmed that projects built on them are
+eligible (see `docs/compliance.md`). With this setup, the models and the
+place they run are:
+
+| Model | Licence | Runs on | Roles in `saving` |
+|---|---|---|---|
+| Muse Spark Open (`meta/muse-spark-open`) | Muse Model License | OpenRouter | coordinator, critical work, review |
+| Muse Glimmer 30B (`meta/muse-glimmer-30b`) | Apache 2.0 | OpenRouter | routine code, docs |
+
+`quality` (experiment arm B) uses Muse Spark Open for every role, and the
+single-model arm A uses Muse Spark Open alone. Set these in `.env`:
+
+```
+MODEL_API_KEY=<OpenRouter key>
+MODEL_API_BASE_URL=https://openrouter.ai/api/v1
+REPOD_CONFIG_DIR=config/open-weights
+```
+
+The same Meta adapter sends the requests, because OpenRouter offers the same
+Responses endpoint. That OpenRouter accepts every field of that request has
+not been confirmed by a live call yet; run `probe` first.
+`REPOD_CONFIG_DIR` switches presets, prices and limits together, and the CLI
+announces it on every command. Executor output is
+limited to 16,000 tokens there, because OpenRouter serves Muse Glimmer with at
+most 16,384. Every run records `https://openrouter.ai` as its model API, and
+the viewer labels it OpenRouter.
 
 ## License
 

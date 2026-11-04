@@ -33,6 +33,18 @@ test("shipped config files are valid and every preset model is priced", async ()
   assert.ok(config.presets.has("quality"));
 });
 
+test("the open-weights config keeps the preset names and stays within Glimmer's output cap", async () => {
+  const config = await loadConfig(path.join(configDir, "open-weights"));
+  // Same names as the main config, so REPOD_CONFIG_DIR can swap it in for the
+  // experiment arms and the page without other changes.
+  assert.deepEqual([...config.presets.keys()].sort(), ["quality", "saving"]);
+  for (const preset of config.presets.values()) {
+    assert.ok(preset.models.every((m) => m.provider === "meta" && m.id.startsWith("meta/muse-")));
+  }
+  // OpenRouter serves Muse Glimmer with at most 16,384 output tokens.
+  assert.ok(config.limits.maxOutputTokens.executor <= 16_384);
+});
+
 test("the base preset used by these tests is valid", () => {
   assert.deepEqual(issues(valid), []);
 });

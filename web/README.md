@@ -64,9 +64,10 @@ it runs, Overview once it has finished, until you pick a tab yourself.
 
 Where the data came from is never left to the reader to guess. Each run and
 experiment records the origin of the model API it called: the run head,
-the run list, the comparison and each experiment say "Meta Model API", mark
-a local fake API as a rehearsal (or another host as not the Meta Model
-API), and say "not recorded" for data from before the origin was kept. An
+the run list, the comparison and each experiment say "Meta Model API" or
+"OpenRouter" (Meta's open-weight models, `config/open-weights`), mark a
+local fake API as a rehearsal (or any other host as not a known model API),
+and say "not recorded" for data from before the origin was kept. An
 experiment not labelled `formal`, an arm with fewer than three runs, and a
 comparison from another API than the open run's are flagged as well.
 
