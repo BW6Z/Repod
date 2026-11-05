@@ -1,0 +1,47 @@
+node_modules/
+
+# Secrets: copy .env.example to .env locally; never commit real keys.
+.env
+.env.*
+!.env.example
+
+# Private keys, certificate containers and local credential files must not
+# enter Git. Keep shared settings in example files without real credentials.
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+credentials.json
+secrets.json
+.npmrc
+.pypirc
+.netrc
+_netrc
+.envrc
+
+# Generated build output, including the future web app's dist directory.
+dist/
+
+# Per-run working copies and event logs are runtime artifacts, not source.
+# Anchored to the root: the published replay keeps exported run data in
+# docs/replay/data/runs/, which must stay tracked.
+/runs/
+
+# Holdout tests and the reference implementation stay outside this public
+# repository until the experiments are over (models must never see them).
+# Ignore every holdout format, including fixtures and metadata, while keeping
+# the public explanation. Remove the holdout rules when publishing the tests.
+/eval/holdout/*
+!/eval/holdout/README.md
+reference/
+
+*.log
+
+# OS-generated metadata is local to each developer's machine.
+.DS_Store
+Thumbs.db
+desktop.ini

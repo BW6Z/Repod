@@ -1,0 +1,110 @@
+import assert from "node:assert/strict";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { loadConfig } from "./load.ts";
+import { Preset, PricingTable } from "./schema.ts";
+
+const configDir = path.resolve(import.meta.dirname, "../../config");
+
+// A valid preset; each test changes one thing so a rejection can only come
+// from the rule under test.
+const valid = {
+  name: "test",
+  description: "",
+  coordinator: "spark",
+  roles: { critical: "wonder", routine: "spark", review: "wonder", docs: "spark" },
+  allowFreeModels: false,
+  models: [
+    { id: "spark", provider: "meta", tier: "cheap" },
+    { id: "wonder", provider: "meta", tier: "strong" },
+  ],
+};
+
+function issues(preset: unknown): string[] {
+  const result = Preset.safeParse(preset);
+  return result.success ? [] : result.error.issues.map((i) => i.message);
+}
+
+test("shipped config files are valid and every preset model is priced", async () => {
+  const config = await loadConfig(configDir);
+  assert.ok(config.presets.has("saving"));
+  assert.ok(config.presets.has("quality"));
+});
+
+test("the open-weights config keeps the preset names and stays within Glimmer's output cap", async () => {
+  const config = await loadConfig(path.join(configDir, "open-weights"));
+  // Same names as the main config, so REPOD_CONFIG_DIR can swap it in for the
+  // experiment arms and the page without other changes.
+  assert.deepEqual([...config.presets.keys()].sort(), ["quality", "saving"]);
+  for (const preset of config.presets.values()) {
+    assert.ok(preset.models.every((m) => m.provider === "meta" && m.id.startsWith("meta/muse-")));
+  }
+  // OpenRouter serves Muse Glimmer with at most 16,384 output tokens.
+  assert.ok(config.limits.maxOutputTokens.executor <= 16_384);
+});
+
+test("the base preset used by these tests is valid", () => {
+  assert.deepEqual(issues(valid), []);
+});
+
+test("a preset that references an undeclared model is rejected", () => {
+  assert.match(issues({ ...valid, roles: { ...valid.roles, docs: "missing" } }).join(), /not declared/);
+});
+
+test("a non-Meta coordinator is rejected", () => {
+  const preset = {
+    ...valid,
+    coordinator: "claude",
+    models: [...valid.models, { id: "claude", provider: "anthropic", tier: "strong" }],
+  };
+  assert.match(issues(preset).join(), /must be a Meta model/);
+});
+
+test("critical and review roles need a strong model; routine needs at least cheap", () => {
+  assert.match(issues({ ...valid, roles: { ...valid.roles, critical: "spark" } }).join(), /"critical" needs a strong/);
+  assert.match(issues({ ...valid, roles: { ...valid.roles, review: "spark" } }).join(), /"review" needs a strong/);
+  const withFree = {
+    ...valid,
+    allowFreeModels: true,
+    roles: { ...valid.roles, routine: "gemini" },
+    models: [...valid.models, { id: "gemini", provider: "meta", tier: "free" }],
+  };
+  assert.match(issues(withFree).join(), /"routine" needs a cheap/);
+});
+
+test("free-tier models require allowFreeModels", () => {
+  const docsOnFree = {
+    ...valid,
+    roles: { ...valid.roles, docs: "gemini" },
+    models: [...valid.models, { id: "gemini", provider: "meta", tier: "free" }],
+  };
+  assert.match(issues(docsOnFree).join(), /allowFreeModels is false/);
+  assert.deepEqual(issues({ ...docsOnFree, allowFreeModels: true }), []);
+});
+
+test("a model declared twice in a preset is rejected, so routing and validation cannot disagree on its tier", () => {
+  // Declared cheap first, then strong: validation used to read the last entry
+  // while routing used the first.
+  const preset = { ...valid, models: [...valid.models, { id: "spark", provider: "meta", tier: "strong" }] };
+  assert.match(issues(preset).join(), /"spark" is declared more than once/);
+});
+
+test("a model with two prices is rejected", () => {
+  const price = { model: "spark", inputPerMTok: 1, outputPerMTok: 2, cachedInputPerMTok: null, source: "https://example.com", checkedOn: "2026-11-01", verified: false };
+  const result = PricingTable.safeParse({ currency: "USD", prices: [price, { ...price, inputPerMTok: 9 }] });
+  assert.equal(result.success, false);
+  assert.match(result.error?.issues.map((i) => i.message).join() ?? "", /"spark" has more than one price/);
+});
+
+test("a config file that is not valid JSON is named in the error", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "repod-config-"));
+  try {
+    await cp(configDir, dir, { recursive: true });
+    await writeFile(path.join(dir, "limits.json"), "{ not json");
+    await assert.rejects(loadConfig(dir), /Invalid config file .*limits\.json/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

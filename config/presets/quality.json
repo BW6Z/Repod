@@ -1,0 +1,16 @@
+{
+  "name": "quality",
+  "description": "Quality-first, Meta only: every executor role uses Muse Wonder. Same plan, context rules and checks as 'saving', so it doubles as experiment arm B.",
+  "coordinator": "muse-spark-1.3",
+  "roles": {
+    "critical": "muse-wonder-1.0",
+    "routine": "muse-wonder-1.0",
+    "review": "muse-wonder-1.0",
+    "docs": "muse-wonder-1.0"
+  },
+  "allowFreeModels": false,
+  "models": [
+    { "id": "muse-spark-1.3", "provider": "meta", "tier": "cheap" },
+    { "id": "muse-wonder-1.0", "provider": "meta", "tier": "strong" }
+  ]
+}

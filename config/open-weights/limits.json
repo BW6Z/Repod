@@ -1,0 +1,27 @@
+{
+  "budgetUsd": 3,
+  "totalBudgetUsd": 10,
+  "maxClarifyingQuestions": 3,
+  "maxPlanRevisions": 1,
+  "cheapAttemptsPerTask": 2,
+  "strongAttemptsPerTask": 2,
+  "maxEscalationsPerTask": 1,
+  "maxTotalReworks": 4,
+  "maxNeedFilesRequests": 1,
+  "maxTransientRetries": 2,
+  "requestTimeoutMs": 300000,
+  "maxFilesPerOutput": 8,
+  "maxFileBytes": 65536,
+  "checkTimeoutMs": 120000,
+  "maxCheckOutputBytes": 200000,
+  "maxOutputTokens": {
+    "coordinator": 8000,
+    "executor": 16000,
+    "reviewer": 8000
+  },
+  "reasoningEffort": {
+    "coordinator": "medium",
+    "executor": "medium",
+    "reviewer": "high"
+  }
+}

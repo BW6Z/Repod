@@ -1,0 +1,19 @@
+{
+  // Source files are executed directly by Node's built-in type stripping, so
+  // tsc is used only as a type checker (noEmit). Type stripping does not check
+  // types, which is why `npm run typecheck` must stay part of every check run.
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

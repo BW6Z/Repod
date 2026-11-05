@@ -1,0 +1,442 @@
+/* Muted (Morandi) blue, frosted glass over soft colour fields; no white
+   surfaces, no animation. The glass falls back to solid colour where the
+   browser cannot blur or the user asks for less transparency. */
+:root {
+  --ink: #24313b;
+  --ink-2: #4d5f6c;
+  --muted: #627380;
+  --accent: #4b6a82; /* the one strong colour: what waits for the user */
+  --accent-ink: #f1f5f8;
+
+  /* Light glass for chrome, denser glass where there is a lot of text. */
+  --glass: rgba(232, 238, 243, 0.38);
+  --glass-dense: rgba(236, 241, 245, 0.66);
+  --glass-inset: rgba(220, 229, 236, 0.55);
+  --glass-item: rgba(240, 244, 247, 0.55);
+  --glass-edge: rgba(250, 252, 253, 0.55);
+  --glass-blur: blur(22px) saturate(140%);
+  --solid: #dfe7ed;
+  --shadow: 0 10px 34px rgba(36, 49, 59, 0.14);
+  --highlight: inset 0 1px 0 rgba(250, 252, 253, 0.6);
+  --hairline: rgba(36, 49, 59, 0.08);
+
+  --tier-cheap: #c4d6e3;
+  --tier-strong: #cbc3da;
+  --tier-free: #c9dad3;
+  --ok: #4f7564;
+  --warn: #8a6d3b;
+  --bad: #955656;
+
+  --r: 16px;
+  --r-sm: 10px;
+  --gap: 16px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  /* Soft colour fields give the glass something to blur; flat colour would make it look grey. */
+  background:
+    radial-gradient(38rem 30rem at 12% 8%, #b9c8d4 0%, transparent 70%),
+    radial-gradient(34rem 28rem at 88% 18%, #a7a3b8 0%, transparent 70%),
+    radial-gradient(40rem 34rem at 70% 92%, #8fa6b6 0%, transparent 70%),
+    radial-gradient(30rem 26rem at 18% 85%, #a9bccb 0%, transparent 70%),
+    linear-gradient(160deg, #7f95a6 0%, #8ea2b2 45%, #7a8fa1 100%);
+  background-color: #8a9eae;
+  background-attachment: fixed;
+}
+h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0 0 12px;
+}
+h3 { font-size: 14px; margin: 0; }
+p { margin: 0 0 8px; }
+code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---- glass ------------------------------------------------------------------- */
+
+.glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow), var(--highlight);
+  border-radius: var(--r);
+}
+.glass.dense { background: var(--glass-dense); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass, .glass.dense, .action { background: var(--solid); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .glass.dense, .action { background: var(--solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* ---- header -------------------------------------------------------------------- */
+
+.bar {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  margin: 12px 16px 0;
+  padding: 10px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+}
+.brand { font-weight: 700; font-size: 16px; }
+.brand-sub { font-weight: 500; color: var(--muted); margin-left: 6px; }
+.tabs { display: flex; gap: 4px; }
+.tab {
+  font: inherit;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.tab[aria-pressed="true"] { background: var(--glass-dense); color: var(--ink); box-shadow: var(--highlight); }
+/* The picker is for narrow screens, where the run list is hidden. */
+.picker { flex: 1 1 14rem; min-width: 0; max-width: 26rem; display: none; }
+.picker select {
+  font: inherit;
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--glass-dense);
+  color: var(--ink);
+}
+.live { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.running { background: var(--ok); }
+.dot.turn { background: var(--accent); }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+.dot.warn { background: var(--warn); }
+
+/* ---- layout: run list | conversation | dashboard -------------------------------- */
+
+.app {
+  display: grid;
+  gap: var(--gap);
+  padding: var(--gap);
+  max-width: 1360px;
+  margin: 0 auto;
+  align-items: start;
+  grid-template-columns: 220px minmax(0, 1fr) 300px;
+}
+.app.single { grid-template-columns: minmax(0, 1fr); max-width: 1040px; }
+.column { display: grid; gap: var(--gap); align-content: start; min-width: 0; }
+.history { padding: 16px; position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow: auto; }
+.side { position: sticky; top: 84px; }
+
+/* Run ids and commit hashes are long unbroken words; let them wrap anywhere. */
+.card { padding: 16px; min-width: 0; overflow-wrap: anywhere; }
+.main { padding: 20px 24px 0; min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; min-height: 60vh; }
+.main > :last-child:not(.action) { margin-bottom: 20px; }
+.app.single .main { min-height: 0; }
+.muted { color: var(--muted); }
+.empty { color: var(--muted); font-style: italic; }
+.note { font-size: 12px; color: var(--muted); }
+.note.raised { color: var(--warn); }
+.request { white-space: pre-wrap; margin: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.num { font-variant-numeric: tabular-nums; }
+.error { color: var(--bad); margin: 0; }
+
+/* ---- run list ---------------------------------------------------------------------- */
+
+.runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.runs button {
+  font: inherit;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+.runs button[aria-current="true"] { background: var(--glass-dense); box-shadow: var(--highlight); }
+.runs .t { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.runs .s { display: block; font-size: 12px; color: var(--muted); margin-left: 16px; }
+.history .note { margin: 12px 0 0; }
+
+/* ---- one run: head, tabs, one panel at a time ------------------------------------------ */
+
+.run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+.run-name { font-size: 18px; font-weight: 650; margin: 0; }
+.run-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 -24px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.run-tab {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px 10px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.run-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.run-tab .count { font-size: 12px; font-weight: 500; color: var(--muted); }
+.panel { display: grid; gap: 16px; align-content: start; padding-top: 18px; flex: 1; min-width: 0; }
+
+/* Overview: acceptance tiles, then one line per task. */
+.acceptance { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.stat { padding: 10px 12px; border-radius: var(--r-sm); background: var(--glass-item); box-shadow: var(--highlight); }
+.stat .note { margin: 0; }
+.stat-value { display: block; font-size: 15px; font-weight: 600; white-space: normal; }
+.route-list { display: grid; gap: 2px; }
+.route-row {
+  font: inherit;
+  display: grid;
+  grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.route-row:hover { background: var(--glass-item); }
+.route-row .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.route-list + .note { margin: 6px 0 0; }
+.outcome .bubble { background: var(--glass-item); }
+
+/* ---- conversation ---------------------------------------------------------------------- */
+
+.thread { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+.msg { max-width: 82%; align-self: flex-start; min-width: 0; }
+.msg.user { align-self: flex-end; }
+.msg-from { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.msg.user .msg-from { text-align: right; }
+.bubble { padding: 12px 14px; border-radius: 14px; background: var(--glass-inset); box-shadow: var(--highlight); }
+.msg.user .bubble { background: rgba(75, 106, 130, 0.88); color: var(--accent-ink); }
+.bubble > :last-child { margin-bottom: 0; }
+.questions { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.questions li { padding: 10px 12px; border-radius: var(--r-sm); background: var(--glass-item); }
+.decision { align-self: center; font-size: 12px; color: var(--muted); text-align: center; }
+
+.block { padding: 14px; border-radius: 14px; background: var(--glass-inset); box-shadow: var(--highlight); }
+.block > p { margin-bottom: 10px; }
+/* Meta names tasks like "planner-core": the id column grows to fit instead of wrapping letter by letter. */
+.id { font-weight: 600; color: var(--muted); white-space: nowrap; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
+.title { font-weight: 500; }
+.cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+
+/* A plan as Meta proposed it. */
+.plan-list { display: grid; gap: 10px; }
+.plan-row { display: grid; grid-template-columns: minmax(30px, max-content) minmax(0, 1fr); gap: 10px; }
+.plan-body { display: grid; gap: 2px; min-width: 0; }
+.plan-body .note { margin: 0; }
+
+/* Tasks: one line each, opened on demand. */
+.tasks { display: grid; gap: 8px; }
+.task { border-radius: var(--r-sm); background: var(--glass-item); }
+.task > summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 14px;
+}
+.task > summary::-webkit-details-marker { display: none; }
+.task[open] > summary { margin-bottom: 0; border-bottom: 1px solid var(--hairline); }
+.task .state { display: grid; justify-items: end; font-size: 12px; white-space: nowrap; }
+.task-body { display: grid; gap: 4px; padding: 10px 12px 12px 52px; }
+.task-body .note { margin: 0; }
+
+.badge {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--glass-item);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.badge.tier-cheap { background: var(--tier-cheap); }
+.badge.tier-strong { background: var(--tier-strong); }
+.badge.tier-free { background: var(--tier-free); }
+.route { display: inline-flex; align-items: center; gap: 4px; }
+.route .arrow { color: var(--muted); }
+.status { font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--ink-2); }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--bad); }
+.status.warn { color: var(--warn); }
+.status.live { color: var(--accent); }
+
+/* A task's attempts and the decisions between them, on a thin rail. */
+.timeline { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--hairline); display: grid; gap: 8px; font-size: 12px; }
+.timeline li { display: grid; gap: 2px; justify-items: start; }
+.timeline .head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.timeline .step { font-weight: 600; color: var(--ink-2); }
+.timeline .who { font-weight: 600; color: var(--accent); }
+.timeline .decided.program .who { color: var(--ink-2); }
+.timeline .status { white-space: normal; }
+
+/* What the run delivered: each changed file, its diff opened on demand. */
+.files { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.file { padding: 8px 12px; border-radius: var(--r-sm); background: var(--glass-item); }
+.file[open] > summary { margin-bottom: 8px; }
+.files .file > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.diff {
+  margin: 0;
+  padding: 8px 0;
+  max-height: 420px;
+  overflow: auto;
+  border-radius: var(--r-sm);
+  background: var(--glass-item);
+  font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  white-space: pre;
+}
+.diff span { display: block; padding: 0 12px; min-width: max-content; }
+.diff .add { background: rgba(79, 117, 100, 0.14); color: var(--ok); }
+.diff .del { background: rgba(149, 86, 86, 0.12); color: var(--bad); }
+.diff .hunk { color: var(--accent); }
+.diff .meta { color: var(--muted); }
+
+.problems { margin: 8px 0 0; padding-left: 18px; }
+.findings { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+
+/* What Meta waits for: the only strongly coloured element on the page. */
+.action {
+  position: sticky;
+  bottom: 0;
+  margin: 20px -24px 0;
+  padding: 14px 24px 18px;
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--glass-edge);
+  border-radius: 0 0 var(--r) var(--r);
+  background: rgba(226, 234, 240, 0.78);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+.action-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.field { display: grid; gap: 4px; }
+.start-form { display: grid; gap: 12px; }
+.start-form .msg { max-width: 100%; }
+.start-part { display: grid; gap: 8px; }
+.start-part[hidden] { display: none; }
+.choices { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.choice { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.choice input { accent-color: var(--accent); }
+.input {
+  font: inherit;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid rgba(36, 49, 59, 0.14);
+  border-radius: var(--r-sm);
+  background: rgba(244, 247, 249, 0.8);
+  color: var(--ink);
+}
+textarea.input { resize: vertical; }
+.buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  font: inherit;
+  font-weight: 500;
+  padding: 8px 16px;
+  border: 1px solid rgba(36, 49, 59, 0.16);
+  border-radius: 999px;
+  background: rgba(240, 244, 247, 0.7);
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.quiet { margin-left: auto; border-color: transparent; background: none; color: var(--muted); }
+.btn:disabled { opacity: 0.6; cursor: default; }
+.input:focus, .btn:focus-visible, .tab:focus-visible, .run-tab:focus-visible, .route-row:focus-visible, .task > summary:focus-visible, .runs button:focus-visible, .link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-align: left; }
+
+/* ---- dashboard ------------------------------------------------------------------------- */
+
+.metric { font-size: 30px; font-weight: 650; line-height: 1.1; }
+.track { height: 6px; border-radius: 6px; background: rgba(36, 49, 59, 0.08); overflow: hidden; }
+.track.thick { height: 10px; }
+.fill { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
+.fill.tier-strong { background: #9e95b3; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; text-align: right; }
+.compare { display: grid; gap: 10px; }
+.compare .label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-2); margin-bottom: 3px; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.list li { display: flex; justify-content: space-between; gap: 10px; }
+.list li > :first-child { min-width: 0; overflow-wrap: anywhere; }
+details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+details[open] > summary { margin-bottom: 10px; }
+
+/* ---- experiments ------------------------------------------------------------------------ */
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+td.num, th.num { text-align: right; }
+/* Cells break between words only; the table scrolls when it is still too wide. */
+th, td { overflow-wrap: normal; }
+th { white-space: nowrap; }
+td:first-child { min-width: 10rem; }
+.table-wrap { overflow-x: auto; margin-bottom: 12px; }
+
+/* ---- narrow screens ----------------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .app { grid-template-columns: minmax(0, 1fr) 280px; }
+  .app .history { display: none; }
+  .picker { display: block; }
+}
+@media (max-width: 760px) {
+  .bar { position: static; margin: 8px 8px 0; gap: 8px 12px; } /* too tall to keep on a phone screen */
+  .live { margin-left: 0; }
+  .app, .app.single { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 24px; }
+  .side { position: static; }
+  .main { padding: 16px 16px 0; }
+  .main > :last-child:not(.action) { margin-bottom: 16px; }
+  .action { margin: 16px -16px 0; padding: 12px 16px 16px; }
+  .msg { max-width: 92%; }
+  .run-tabs { margin: 0 -16px; padding: 0 8px; }
+  .run-tab { padding: 8px 8px 9px; }
+  .acceptance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .route-row { grid-template-columns: minmax(26px, max-content) minmax(0, 1fr) auto; }
+  .route-row .cost { display: none; }
+  .task > summary { grid-template-columns: minmax(26px, max-content) minmax(0, 1fr); }
+  .task .state { grid-column: 2; justify-items: start; }
+  .task-body { padding-left: 12px; }
+}

@@ -1,0 +1,1 @@
+Add dependency-order planning to the library: `planOrder(tasks)` returns the order and the stages in which tasks can run, and reports duplicate ids, unknown dependencies and cycles with typed errors. Add a `plan` CLI command, a runnable example, API comments, a README section and a CHANGELOG entry. Follow SPEC.md.

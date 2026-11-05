@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [development]
+    # Docs-only pushes skip CI. Pull requests below are never filtered, so
+    # required status checks on main can always report a result.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token: CI validates changes and never writes to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    # Windows is included because demos and the check runner run on Windows;
+    # path and child-process problems must surface there, not only on Linux.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # The demo baseline must pass its own tests before any run starts from it.
+      - run: npm run test:sample
+      - run: npm run repod -- check-config
+
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      # Fails only on high or critical advisories, so low-severity noise does
+      # not block work but serious dependency issues do.
+      - run: npm audit --audit-level=high
+
+  repo-hygiene:
+    name: repo-hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: No secrets file is tracked
+        run: |
+          if [ -n "$(git ls-files .env)" ]; then
+            echo "::error::.env is tracked by git. Remove it and rotate any keys it contained."
+            exit 1
+          fi
+      - name: No holdout tests or reference implementation are published early
+        run: |
+          if [ -n "$(git ls-files 'eval/holdout/*.ts' 'reference/')" ]; then
+            echo "::error::Holdout tests or the reference implementation are tracked. They must stay private until the experiments are over."
+            exit 1
+          fi
+      - name: Required files exist
+        run: |
+          missing=0
+          for f in README.md .env.example .gitignore package-lock.json \
+                   config/limits.json config/pricing.json docs/compliance.md \
+                   sample-repo/SPEC.md eval/demo/request.md eval/demo/checks.json \
+                   eval/demo/single-model.json; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Required file missing: $f"
+              missing=1
+            fi
+          done
+          exit $missing

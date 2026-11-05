@@ -1,0 +1,25 @@
+{
+  "currency": "USD",
+  "prices": [
+    {
+      "model": "meta/muse-spark-open",
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 4.25,
+      "cachedInputPerMTok": 0.15,
+      "source": "https://openrouter.ai/meta/muse-spark-open",
+      "checkedOn": "2026-11-04",
+      "verified": true,
+      "note": "OpenRouter list price, read from its live models API. Open-weight model."
+    },
+    {
+      "model": "meta/muse-glimmer-30b",
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2,
+      "cachedInputPerMTok": 0.04,
+      "source": "https://openrouter.ai/meta/muse-glimmer-30b",
+      "checkedOn": "2026-11-04",
+      "verified": true,
+      "note": "OpenRouter list price, read from its live models API. Open-weight model; OpenRouter caps its output at 16,384 tokens."
+    }
+  ]
+}
