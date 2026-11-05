@@ -66,6 +66,9 @@ table below for each part.
 
 ### Try it
 
+**Demo video (2 minutes):** <https://youtu.be/GEayTOGYxIs>. It shows the
+fixed demo request, run from the page on real models.
+
 1. **See the real runs, no install and no key.** The replay at
    <https://bw6z.github.io/Repod/replay/> is a read-only copy of the run
    viewer with every real run and experiment listed below: the conversation,
