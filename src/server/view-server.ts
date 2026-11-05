@@ -27,7 +27,7 @@ import { SessionConflictError, type InteractiveSession } from "./session.ts";
  * of the demo request and hold the conversation with Meta:
  *
  *   data/session.json   the session: state, what Meta is waiting for, token
- *   POST api/start      {"preset": "saving"}
+ *   POST api/start      {"preset": "saving", "request"?: "..."} (no request: the demo request)
  *   POST api/answers    {"answers": {"<question id>": "<answer>"}}
  *   POST api/review     {"action": "approve" | "revise" | "stop", "feedback"?: "..."}
  *
@@ -167,7 +167,8 @@ const json = (res: ServerResponse, value: unknown, status = 200) => send(res, st
 const notFound = (res: ServerResponse) => send(res, 404, "text/plain; charset=utf-8", "Not found");
 
 const MAX_BODY_BYTES = 32 * 1024;
-const StartBody = z.strictObject({ preset: z.string().min(1) });
+// request is optional: without it the page runs the demo request.
+const StartBody = z.strictObject({ preset: z.string().min(1), request: z.string().trim().min(1).max(4000).optional() });
 const AnswersBody = z.strictObject({ answers: z.record(z.string(), z.string().max(4000)) });
 const ReviewBody = z.strictObject({ action: z.enum(["approve", "revise", "stop"]), feedback: z.string().max(4000).optional() });
 
@@ -204,8 +205,8 @@ async function handleAction(session: InteractiveSession, token: string, req: Inc
   try {
     const body = await readBody(req);
     if (action === "start") {
-      const { preset } = StartBody.parse(body);
-      return json(res, { ok: true, runId: await session.start(preset) });
+      const { preset, request } = StartBody.parse(body);
+      return json(res, { ok: true, runId: await session.start(preset, request ?? null) });
     }
     if (action === "answers") {
       session.answer(AnswersBody.parse(body).answers);

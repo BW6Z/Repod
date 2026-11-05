@@ -66,8 +66,10 @@ Commands:
   check-config          Validate config/ (limits, pricing, presets)
   spend                 Show recorded spend across all runs against the total budget
   probe [--model <id>]  Send one tiny structured-output request (costs real money)
-  run [--preset <name>] [--experiment] [--holdout <dir>]
+  run [--preset <name>] [--experiment] [--holdout <dir> | --request <text>]
                         Run the demo request on a copy of sample-repo (costs real money).
+                        --request runs your own request on sample-repo instead; only the type
+                        check and the repo's own tests judge it (no visible-test groups, no holdout).
                         --experiment uses default answers and approves the plan automatically.
                         --holdout runs the holdout tests in <dir> once after freezing.
   experiment --holdout <dir> [--arms A,C] [--runs <n>] [--label <name>]
@@ -190,16 +192,22 @@ async function probe(model: string | null): Promise<number> {
   });
 }
 
+// The contract a free-form request gets in place of eval/demo/contract.md.
+const FREE_FORM_CONTRACT =
+  "No interface contract was written for this request. Follow sample-repo's SPEC.md and the conventions of the existing code and keep the existing public API working. Files under test/ cannot be changed: the type check and the existing tests judge the result.";
+
 /**
  * Runs the demo request (eval/demo) end to end on a fresh copy of
  * sample-repo: Meta plans and coordinates, executors change the copy, checks
  * judge every attempt, and the report is written to runs/<runId>/report.json.
  */
 async function run(options: CommandOptions): Promise<number> {
-  if (!options.holdout) console.warn("No --holdout folder given: holdout tests will not run.");
+  if (options.request) console.warn("Free-form request: only the type check and the sample repo's own tests will judge the result.");
+  else if (!options.holdout) console.warn("No --holdout folder given: holdout tests will not run.");
   const { report, reportFile } = await runDemo({
     preset: options.preset,
     holdout: options.holdout,
+    request: options.request,
     hooks: options.experiment ? experimentHooks : terminalHooks(),
     command: "run",
   });
@@ -217,6 +225,7 @@ async function run(options: CommandOptions): Promise<number> {
 async function runDemo(o: {
   preset: string | null;
   holdout: string | null;
+  request?: string | null; // a free-form request instead of the demo request
   hooks: PipelineHooks;
   command: string;
   onStarted?: (runId: string) => void;
@@ -226,6 +235,10 @@ async function runDemo(o: {
   const preset = config.presets.get(presetName);
   if (!preset) throw new Error(`Unknown preset "${presetName}"`);
   const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
+  // A free-form request keeps the sample repo and its own tests, but none of
+  // the demo's contract, visible-test groups or holdout: they were written for
+  // the demo request and would judge a different request against the wrong goal.
+  const freeForm = o.request ? o.request : null;
   const { limits } = config;
   requireAdapters(preset);
 
@@ -234,13 +247,13 @@ async function runDemo(o: {
     const runId = `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     const workspace = await createRunWorkspace(path.join(repoRoot, "sample-repo"), runsDir, runId);
     const ledger = new LedgerWriter(workspace.ledgerFile, runId);
-    const holdoutChecks = o.holdout
+    const holdoutChecks = o.holdout && !freeForm
       ? await prepareHoldout(workspace.runDir, path.resolve(o.holdout), limits.checkTimeoutMs, limits.maxCheckOutputBytes)
       : [];
     o.onStarted?.(runId);
 
     const report = await runPipeline({
-      request: kit.request,
+      request: freeForm ?? kit.request,
       config,
       preset,
       gateway: new ModelGateway({
@@ -253,7 +266,7 @@ async function runDemo(o: {
       }),
       ledger,
       workspace,
-      contract: kit.contract,
+      contract: freeForm ? FREE_FORM_CONTRACT : kit.contract,
       devChecks: standardChecks({
         workspaceRoot: workspace.root,
         tscEntry: path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"),
@@ -261,7 +274,7 @@ async function runDemo(o: {
         maxOutputBytes: limits.maxCheckOutputBytes,
       }),
       holdoutChecks,
-      checkGroups: kit.checkGroups,
+      checkGroups: freeForm ? [] : kit.checkGroups,
       ...(kit.baselineTests === null ? {} : { baselineTests: kit.baselineTests }),
       visibleTestsDir: kit.visibleTestsDir,
       availableChecks: kit.availableChecks,
@@ -368,7 +381,7 @@ async function view(options: CommandOptions): Promise<number> {
     session = new InteractiveSession({
       request: kit.request,
       presets: [...config.presets.keys()],
-      start: (preset, hooks, onStarted) => runDemo({ preset, holdout: options.holdout, hooks, command: "view", onStarted }),
+      start: (preset, request, hooks, onStarted) => runDemo({ preset, holdout: options.holdout, request, hooks, command: "view", onStarted }),
     });
     if (!options.holdout) console.warn("No --holdout folder given: runs started from the page will not run holdout tests.");
   }

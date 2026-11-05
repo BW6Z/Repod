@@ -112,14 +112,16 @@ describe("view server with an interactive session", () => {
   let interactive: Server;
   let port: number;
   let started = 0;
+  let lastRequest: string | null | undefined;
 
   before(async () => {
     const config = await loadConfig(path.join(repoRoot, "config"));
     const session = new InteractiveSession({
       request: "Add planOrder.",
       presets: ["saving"],
-      async start(_preset, hooks, onStarted) {
+      async start(_preset, request, hooks, onStarted) {
         started++;
+        lastRequest = request;
         onStarted("run-page");
         await hooks.answerQuestions([{ id: "q1", question: "YAML?", why: "", default: "No" }], "One question.");
       },
@@ -170,11 +172,14 @@ describe("view server with an interactive session", () => {
     assert.equal((await call("POST", "/api/start", { ...page, Host: `attacker.example:${port}` }, body)).status, 403, "rebound host");
     assert.equal((await call("POST", "/api/start", { ...page, "Content-Type": "text/plain" }, body)).status, 415, "a form post");
     assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: 1 }))).status, 400, "invalid body");
+    assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: "saving", request: "   " }))).status, 400, "blank request");
+    assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: "saving", request: "x".repeat(4001) }))).status, 400, "request too long");
     assert.equal(started, 0, "nothing was started by any refused request");
 
     const ok = await call("POST", "/api/start", page, body);
     assert.equal(ok.status, 200, ok.text);
     assert.deepEqual(JSON.parse(ok.text), { ok: true, runId: "run-page" });
+    assert.equal(lastRequest, null, "no request field runs the demo request");
     assert.equal((await call("POST", "/api/start", page, body)).status, 409, "one run at a time");
   });
 

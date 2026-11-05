@@ -101,7 +101,8 @@ Meta Model API yet. Do not treat planned items as working features.
 | Run viewer: local page showing each run in tabs (live while it runs): an overview with an acceptance summary, the conversation with Meta, each task's attempts and who decided what after a failure, and the delivered diff; cost against one strong model from experiment results, and experiment results, each marked with where its data came from (Meta Model API, a rehearsal, or not recorded) and flagged when it is not a formal experiment or rests on fewer than three runs per arm (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
 | Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented; run with real models (three demo runs) |
 | Static replay export: recorded runs as static files anyone can open without a key; local paths and holdout output removed (`export`; `src/server/replay.ts`) | Implemented, tested on rehearsal data; nothing published yet |
-| Free-form requests on the page | Planned |
+| Free-form requests on the sample library: on the page ("Your own request") or `run --request` | Implemented, tested; judged only by the type check and the library's own tests, **not by holdout tests** |
+| Free-form requests on any repository, with a sandbox and generated checks | Planned |
 
 ## Requirements
 
@@ -135,6 +136,7 @@ npm run repod -- probe           # one tiny live request; costs real money
 npm run repod -- probe --model muse-wonder-1.0
 npm run repod -- run             # the demo request, interactive; costs real money
 npm run repod -- run --experiment --holdout <dir>
+npm run repod -- run --request "<your request>"                # your own request on sample-repo; costs real money
 npm run repod -- experiment --holdout <dir>                    # arms A and C, 1 run each ("debug"); <dir> needs expected-tests.json
 npm run repod -- experiment --holdout <dir> --runs 3 --label formal
 npm run repod -- view                                          # read-only run viewer on http://127.0.0.1:4173; free
@@ -148,6 +150,13 @@ and approve the plan (or send it back once). `--experiment` uses default
 answers and approves automatically; `--preset quality` switches presets;
 `--holdout <dir>` runs the holdout tests in `<dir>` once after the result is
 frozen. The report is written to `runs/<runId>/report.json`.
+
+`--request "<text>"` runs your own request on the same copy of `sample-repo/`
+instead of the demo request. On the page, choose "Your own request". Such a
+run has no interface contract, no visible-test groups and no holdout tests,
+because those were written for the demo request. Only the type check and the
+library's existing tests judge it, so it is not verified the way the demo is.
+The CLI refuses `--request` together with `--holdout`.
 
 `experiment` runs the comparison arms of `eval/README.md` (`--arms A,C` by
 default; add `B` for the quality preset) for `--runs` rounds, each run on a
@@ -324,6 +333,13 @@ plan):
 | `run-2026-11-04T23-19-49-378Z` | incomplete | not run | $0.1141 | the CLI task asked twice for files it was supposed to create; it was already on the strong model, so it stopped |
 | `run-2026-11-04T23-23-12-584Z` | completed | 31/31 | $0.0902 | one repair on the docs task (Muse Glimmer) |
 
+A free-form request (`run --request`, not verified by holdout tests): "Add a function countByPriority(tasks) to src/tasks.ts ... export it from src/index.ts and add tests for it under test/".
+
+| Run | Status | Holdout | Cost | Note |
+|---|---|---|---|---|
+| `run-2026-11-04T23-53-58-253Z` | incomplete | not run | $0.0124 | stopped at planning: Meta planned a test file under the protected `test/`; the planning input now lists the protected paths |
+| `run-2026-11-04T23-56-43-164Z` | completed | not run | $0.0125 | both tasks on Muse Glimmer; no test file was added, because `test/` is protected |
+
 What this shows so far:
 
 - Quality held whenever a run finished its tasks: every frozen result that
@@ -353,9 +369,10 @@ What this shows so far:
 - The reviewer is conservative. Findings it cannot verify leave the run
   incomplete for a human to decide, even when the holdout passes. Blocking
   findings are reported, not fixed automatically.
-- The request is fixed: its checks, visible tests and holdout tests were
-  written for it. Free-form requests need a sandbox and generated checks and
-  are planned.
+- Only the demo request is verified: its contract, visible tests and
+  holdout tests were written for it. Your own requests run on the same
+  sample library and are judged only by the type check and its existing
+  tests. Other repositories, a sandbox and generated checks are planned.
 - Spend figures are list-price estimates. A call whose usage cannot be read
   is billed at its full reservation, so the recorded total can be higher
   than the provider's bill.

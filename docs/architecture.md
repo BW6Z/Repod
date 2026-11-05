@@ -334,6 +334,13 @@ our own timeout and an unreadable response body are not.
   `runs/<runId>/workspace/`, and import the frozen workspace as
   `../workspace`. Keeping them outside the workspace means copying them
   never changes the frozen content.
+- A free-form request (`run --request`, or "Your own request" on the page)
+  uses the same baseline but none of the demo kit's request-specific parts:
+  a generic contract instead of `contract.md`, no check groups, and no
+  holdout (the CLI refuses `--request` with `--holdout`). Only the type check
+  and the baseline's own tests judge it. Without check groups, the planning
+  input lists the protected paths, so Meta does not plan writes under
+  `test/`. Experiments always use the demo request.
 
 ## Experiments (`npm run repod -- experiment`)
 

@@ -761,9 +761,32 @@ function renderNewRun() {
   preset.value = session.presets.includes("saving") ? "saving" : session.presets[0];
   const start = el("button", { type: "submit", class: "btn primary", disabled: busy }, "Start run");
   const errorLine = el("p", { class: "error", hidden: true });
-  const form = el("form", { class: "start-form" },
+
+  // Two kinds of request on the same sample library. Only the demo request has
+  // the contract, visible tests and holdout tests written for it; a request of
+  // your own is judged by the type check and the library's existing tests.
+  const own = el("textarea", { class: "input", rows: 4, maxlength: 4000, placeholder: "Describe a change to the sample library, for example: add a function that counts tasks by priority, export it and test it.", "aria-label": "Your request" });
+  const demoChoice = el("input", { type: "radio", name: "request-kind", value: "demo", checked: true });
+  const ownChoice = el("input", { type: "radio", name: "request-kind", value: "own" });
+  const demoPart = el("div", { class: "start-part" },
     message("user", "You", el("p", { class: "request" }, session.request)),
-    el("p", { class: "note" }, "This build runs the demo request on a copy of the sample library; the request is fixed so its tests apply."),
+    el("p", { class: "note" }, "Checked by its visible tests and, when the page was started with --holdout, by hidden holdout tests."));
+  const ownPart = el("div", { class: "start-part", hidden: true },
+    own,
+    el("p", { class: "note raised" }, "Not verified by holdout tests: only the type check and the library's own tests judge the result. Runs on the same sample library."));
+  const showKind = () => {
+    demoPart.hidden = !demoChoice.checked;
+    ownPart.hidden = !ownChoice.checked;
+  };
+  demoChoice.addEventListener("change", showKind);
+  ownChoice.addEventListener("change", showKind);
+
+  const form = el("form", { class: "start-form" },
+    el("div", { class: "choices", role: "radiogroup", "aria-label": "Request" },
+      el("label", { class: "choice" }, demoChoice, "The demo request (verified)"),
+      el("label", { class: "choice" }, ownChoice, "Your own request")),
+    demoPart,
+    ownPart,
     el("label", { class: "field" }, el("span", {}, "Preset"), preset),
     el("p", { class: "note raised" }, "Costs real money: every model call is billed to the key in MODEL_API_KEY, within the budgets in config/limits.json."),
     busy ? el("p", { class: "row" }, "A run started from this page is in progress.",
@@ -771,10 +794,16 @@ function renderNewRun() {
     el("div", { class: "buttons" }, start), errorLine);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const text = own.value.trim();
+    if (ownChoice.checked && !text) {
+      errorLine.textContent = "Write your request first, or choose the demo request.";
+      errorLine.hidden = false;
+      return;
+    }
     start.disabled = true;
     errorLine.hidden = true;
     try {
-      const { runId } = await act("start", { preset: preset.value });
+      const { runId } = await act("start", ownChoice.checked ? { preset: preset.value, request: text } : { preset: preset.value });
       state.runs = (await fetchJson("data/runs.json")) ?? state.runs;
       fillPicker();
       openRun(runId);

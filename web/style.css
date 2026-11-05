@@ -350,6 +350,11 @@ code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; f
 .field { display: grid; gap: 4px; }
 .start-form { display: grid; gap: 12px; }
 .start-form .msg { max-width: 100%; }
+.start-part { display: grid; gap: 8px; }
+.start-part[hidden] { display: none; }
+.choices { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.choice { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.choice input { accent-color: var(--accent); }
 .input {
   font: inherit;
   width: 100%;

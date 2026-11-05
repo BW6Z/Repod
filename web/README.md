@@ -14,9 +14,11 @@ Without `--interactive` the command only reads `runs/`; it never calls a
 model and costs nothing, so it can run next to `run` or `experiment` to
 follow them live.
 
-With `--interactive` a **New run** tab starts the demo request (fixed, so
-the demo's tests apply) with a chosen preset. The run is the same paid run
-as `npm run repod -- run`, with your Meta key, the same budgets and the
+With `--interactive` a **New run** tab starts a run with a chosen preset:
+either the demo request, whose contract, visible tests and holdout tests
+apply, or **your own request** on the same sample library, judged only by
+the type check and the library's existing tests. The run is the same paid run
+as `npm run repod -- run`, with the key in MODEL_API_KEY, the same budgets and the
 same paid-run lock; the conversation happens on the page instead of the
 terminal: answer Meta's clarifying questions (an empty answer takes the
 default), then approve the plan, send it back once with feedback, or stop
@@ -105,4 +107,5 @@ repeats it in a meta tag, so a replay on another host keeps it.
 
 ## Not implemented yet
 
-- Requests other than the demo request (they would need their own checks).
+- Requests on other repositories, and generated checks for your own
+  requests (today they are not verified by holdout tests).

@@ -7,6 +7,7 @@ export type Command = (typeof COMMANDS)[number];
 export interface CommandOptions {
   model: string | null; // probe
   preset: string | null; // run
+  request: string | null; // run: a free-form request instead of the demo request
   experiment: boolean; // run: default answers and automatic plan approval
   holdout: string | null; // run, experiment: folder with holdout tests
   arms: Arm[]; // experiment: arms in run order; default A, C (B only when asked)
@@ -25,7 +26,7 @@ const ALLOWED: Record<Command, ReadonlyArray<keyof CommandOptions>> = {
   "check-config": [],
   spend: [],
   probe: ["model"],
-  run: ["preset", "experiment", "holdout"],
+  run: ["preset", "experiment", "holdout", "request"],
   experiment: ["arms", "runs", "label", "holdout"],
   view: ["port", "interactive", "holdout"],
   export: ["out", "include"],
@@ -48,6 +49,7 @@ export function parseCommand(argv: string[]): ParsedCommand {
       options: {
         model: { type: "string" },
         preset: { type: "string" },
+        request: { type: "string" },
         experiment: { type: "boolean" },
         holdout: { type: "string" },
         arms: { type: "string" },
@@ -95,12 +97,19 @@ export function parseCommand(argv: string[]): ParsedCommand {
   if (command === "experiment" && values.holdout === undefined) {
     return { ok: false, error: "experiment needs --holdout <dir>: the holdout pass rate is its main result" };
   }
+  if (values.request !== undefined && !values.request.trim()) return { ok: false, error: "--request needs the text of the request" };
+  // The holdout tests were written for the demo request; on any other request
+  // they would only measure how far it is from that one.
+  if (values.request !== undefined && values.holdout !== undefined) {
+    return { ok: false, error: "--request cannot be combined with --holdout: the holdout tests belong to the demo request" };
+  }
 
   return {
     ok: true,
     command: command as Command | null,
     model: values.model ?? null,
     preset: values.preset ?? null,
+    request: values.request?.trim() || null,
     experiment: values.experiment ?? false,
     holdout: values.holdout ?? null,
     arms: arms as Arm[],

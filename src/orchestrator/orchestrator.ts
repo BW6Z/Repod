@@ -6,7 +6,7 @@ import { LedgerWriteError } from "../gateway/gateway.ts";
 import type { LedgerWriter } from "../gateway/ledger.ts";
 import type { FailureKind, ModelRequest, ModelResult, Role } from "../gateway/types.ts";
 import { VISIBLE_TESTS, runCheck as defaultRunCheck, type CheckResult, type CheckSpec } from "../verifier/verifier.ts";
-import { PathRejectedError, isProtected, normalizeRelativePath, resolveAllowedPath } from "../workspace/paths.ts";
+import { PROTECTED_PATTERNS, PathRejectedError, isProtected, normalizeRelativePath, resolveAllowedPath } from "../workspace/paths.ts";
 import { renderRepoSummary, summarizeRepo } from "../workspace/summary.ts";
 import {
   OutputRejectedError,
@@ -322,7 +322,13 @@ class Run {
               .map((g) => `- ${g.name}: ${g.description}${g.requires.length ? ` (requires: ${g.requires.join(", ")})` : ""}`)
               .join("\n"),
           ]
-        : []),
+        : [
+            // Without check groups (a free-form request) Meta would otherwise
+            // plan new test files under test/, which plan validation rejects;
+            // a first real free-form run stopped there.
+            "# Files that cannot be written",
+            `${PROTECTED_PATTERNS.join(", ")}. Tests under test/ are written by people before a run, so do not plan to write any; the type check and the existing tests judge the result.`,
+          ]),
       "# Limits",
       `At most ${config.limits.maxClarifyingQuestions} clarifying questions, asked once.`,
     ].join("\n\n");

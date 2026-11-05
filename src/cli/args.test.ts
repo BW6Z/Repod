@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseCommand } from "./args.ts";
 
-const defaults = { model: null, preset: null, experiment: false, holdout: null, arms: ["A", "C"], runs: 1, label: null, port: 4173, interactive: false, out: null, include: [] };
+const defaults = { model: null, preset: null, request: null, experiment: false, holdout: null, arms: ["A", "C"], runs: 1, label: null, port: 4173, interactive: false, out: null, include: [] };
 
 test("parses commands and their options", () => {
   assert.deepEqual(parseCommand([]), { ok: true, command: null, ...defaults });
@@ -15,6 +15,13 @@ test("parses commands and their options", () => {
     ok: true, command: "experiment", ...defaults, holdout: "h", arms: ["C", "A", "B"], runs: 3, label: "formal",
   });
   assert.deepEqual(parseCommand(["experiment", "--holdout", "h"]), { ok: true, command: "experiment", ...defaults, holdout: "h" });
+});
+
+test("run takes a free-form request, but not together with the demo's holdout tests", () => {
+  assert.deepEqual(parseCommand(["run", "--request", "  Add a --version flag. "]), { ok: true, command: "run", ...defaults, request: "Add a --version flag." });
+  assert.match(String((parseCommand(["run", "--request", " "]) as { error: string }).error), /needs the text/);
+  assert.match(String((parseCommand(["run", "--request", "x", "--holdout", "h"]) as { error: string }).error), /cannot be combined with --holdout/);
+  assert.equal(parseCommand(["experiment", "--holdout", "h", "--request", "x"]).ok, false, "experiments always use the demo request");
 });
 
 test("a stray '--' that would hide --model is an error, not a silent default", () => {

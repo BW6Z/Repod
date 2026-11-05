@@ -167,6 +167,8 @@ describe("runPipeline: the main path", () => {
     // The coordinator is the Meta model; the executor is what the plan chose.
     assert.equal(gateway.calls("plan_response")[0]?.model, "muse-spark-1.3");
     assert.equal(gateway.calls("plan_response")[0]?.role, "coordinator");
+    // No check groups (as for a free-form request): Meta is told test/ cannot be written.
+    assert.match(gateway.calls("plan_response")[0]?.input ?? "", /# Files that cannot be written\n\n[^\n]*test\/\*\*/);
   });
 
   test("clarifying questions are answered (defaults in experiment mode) before planning", async () => {
@@ -569,6 +571,8 @@ describe("runPipeline: check groups", () => {
       run_summary: [summary],
     });
     const { report, workspace } = await run(gateway, { checkGroups: groups, visibleTestsDir });
+    // With check groups (the demo) the planning input is unchanged: no protected-files note.
+    assert.doesNotMatch(gateway.calls("plan_response")[0]?.input ?? "", /# Files that cannot be written/);
 
     // Without groups, sub.test.ts would break T1's type check: sub() does not exist yet.
     assert.equal(report.status, "completed", report.problems.join("\n"));
