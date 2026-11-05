@@ -27,7 +27,9 @@ _netrc
 dist/
 
 # Per-run working copies and event logs are runtime artifacts, not source.
-runs/
+# Anchored to the root: the published replay keeps exported run data in
+# docs/replay/data/runs/, which must stay tracked.
+/runs/
 
 # Holdout tests and the reference implementation stay outside this public
 # repository until the experiments are over (models must never see them).
