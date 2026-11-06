@@ -45,3 +45,10 @@ reference/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Editor and assistant settings are per-developer (local paths, permission
+# allowlists) and must not be shared through the repository.
+.vscode/
+.idea/
+.claude/settings.local.json
+*.swp

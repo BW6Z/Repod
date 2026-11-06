@@ -76,7 +76,7 @@ fixed demo request, run from the page on real models.
    is exported with `export` into `docs/replay/`, with local paths and the
    holdout tests' output removed.
 2. **Run the tests, free.** Clone the repository, then run `npm install` and
-   `npm run check`: type check, 261 unit tests and the sample's own tests.
+   `npm run check`: type check, 262 unit tests and the sample's own tests.
 3. **Run it yourself, with your own key.** Put an OpenRouter key in `.env`
    as shown under [Meta's open-weight models on OpenRouter](#metas-open-weight-models-on-openrouter),
    then run `npm run repod -- view --interactive` and choose **New run**. The
@@ -119,9 +119,9 @@ Meta Model API yet. Do not treat planned items as working features.
 | Sample repository: spec, baseline library and baseline tests (`sample-repo/`) | Implemented, tested |
 | Demo kit: request, interface contract, check groups and visible tests (`eval/demo/`) | Implemented; validated against a private reference implementation |
 | Holdout tests | Written and validated (including deliberately wrong implementations that must fail); kept private until the experiments are over |
-| Run viewer: local page showing each run in tabs (live while it runs): an overview with an acceptance summary, the conversation with Meta, each task's attempts and who decided what after a failure, and the delivered diff; cost against one strong model from experiment results, and experiment results, each marked with where its data came from (Meta Model API, a rehearsal, or not recorded) and flagged when it is not a formal experiment or rests on fewer than three runs per arm (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
-| Conversation with Meta on the page: start the demo run, answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented; run with real models (three demo runs) |
-| Static replay export: recorded runs as static files anyone can open without a key; local paths and holdout output removed (`export`; `src/server/replay.ts`) | Implemented, tested; the real runs are exported to `docs/replay/` and served by GitHub Pages |
+| Run viewer: local page laid out as a workbench (light and dark themes; a searchable run list; the open run in the center; cost and run details on the right) showing each run in tabs (live while it runs): an overview with an acceptance summary and a routing table, the conversation with Meta with the plan as a card, each task's attempts and who decided what after a failure as a timeline, and the delivered diff; cost against one strong model from experiment results, and experiment results, each marked with where its data came from (Meta Model API, a rehearsal, or not recorded) and flagged when it is not a formal experiment or rests on fewer than three runs per arm (`web/`, `src/server/view-server.ts`) | Implemented, tested on rehearsal data |
+| Conversation with Meta on the page: start a run (the demo request or your own, optionally named), answer questions, approve, revise once or stop (`view --interactive`; `src/server/session.ts`) | Implemented; run with real models (three demo runs) |
+| Static replay export: recorded runs as static files anyone can open without a key; local paths and holdout output removed (`export`; `src/server/replay.ts`) | Implemented, tested; the real runs are exported to `docs/replay/` and served by GitHub Pages. That copy still shows the viewer as submitted; run `export` again to update it |
 | Free-form requests on the sample library: on the page ("Your own request") or `run --request` | Implemented, tested; judged only by the type check and the library's own tests, **not by holdout tests** |
 | Free-form requests on any repository, with a sandbox and generated checks | Planned |
 

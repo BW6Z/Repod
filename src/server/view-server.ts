@@ -13,7 +13,7 @@ import { SessionConflictError, type InteractiveSession } from "./session.ts";
  * uses, so one page works both live (polling a run in progress on this
  * machine) and as a published replay:
  *
- *   data/source.json                 where the data comes from
+ *   data/source.json                 where the data comes from, and the demo request's text
  *   data/runs.json                   one line per run, newest first
  *   data/models.json                 tier and price of every configured model
  *   data/experiments.json            every experiment result, newest first
@@ -26,8 +26,8 @@ import { SessionConflictError, type InteractiveSession } from "./session.ts";
  * With a session (`view --interactive`), the page can also start a paid run
  * of the demo request and hold the conversation with Meta:
  *
- *   data/session.json   the session: state, what Meta is waiting for, token
- *   POST api/start      {"preset": "saving", "request"?: "..."} (no request: the demo request)
+ *   data/session.json   the session: state, what Meta is waiting for, token, preset descriptions
+ *   POST api/start      {"preset": "saving", "request"?: "...", "name"?: "..."} (no request: the demo request)
  *   POST api/answers    {"answers": {"<question id>": "<answer>"}}
  *   POST api/review     {"action": "approve" | "revise" | "stop", "feedback"?: "..."}
  *
@@ -41,6 +41,9 @@ export interface ViewServerOptions {
   runsDir: string;
   config: RepodConfig;
   session?: InteractiveSession | null;
+  // The demo request's text, so the page can tell a run of it (verified by
+  // its holdout tests) from a free-form request. Shown, never interpreted.
+  demoRequest?: string | null;
 }
 
 export interface RunListing {
@@ -48,6 +51,7 @@ export interface RunListing {
   kind: "run" | "probe"; // a probe has no run_started event
   request: string | null;
   preset: string | null;
+  name: string | null; // the user's name for the run, when one was given
   startedAt: string | null;
   finished: boolean;
   status: string; // "running" until run_finished, then its status
@@ -116,6 +120,7 @@ export async function listRuns(runsDir: string): Promise<RunListing[]> {
       kind: started ? "run" : "probe",
       request: typeof started?.request === "string" ? started.request : null,
       preset: typeof started?.preset === "string" ? started.preset : null,
+      name: typeof started?.name === "string" ? started.name : null,
       startedAt: typeof events[0]?.ts === "string" ? events[0].ts : null,
       finished: Boolean(finished) || (!started && events.length > 0),
       status: typeof finished?.status === "string" ? finished.status : started ? "running" : "probe",
@@ -167,8 +172,13 @@ const json = (res: ServerResponse, value: unknown, status = 200) => send(res, st
 const notFound = (res: ServerResponse) => send(res, 404, "text/plain; charset=utf-8", "Not found");
 
 const MAX_BODY_BYTES = 32 * 1024;
-// request is optional: without it the page runs the demo request.
-const StartBody = z.strictObject({ preset: z.string().min(1), request: z.string().trim().min(1).max(4000).optional() });
+// request is optional: without it the page runs the demo request. name is
+// the user's label for the run: one short line, shown as text in the list.
+const StartBody = z.strictObject({
+  preset: z.string().min(1),
+  request: z.string().trim().min(1).max(4000).optional(),
+  name: z.string().trim().min(1).max(80).regex(/^[^\p{Cc}]*$/u, "No control characters.").optional(),
+});
 const AnswersBody = z.strictObject({ answers: z.record(z.string(), z.string().max(4000)) });
 const ReviewBody = z.strictObject({ action: z.enum(["approve", "revise", "stop"]), feedback: z.string().max(4000).optional() });
 
@@ -205,8 +215,8 @@ async function handleAction(session: InteractiveSession, token: string, req: Inc
   try {
     const body = await readBody(req);
     if (action === "start") {
-      const { preset, request } = StartBody.parse(body);
-      return json(res, { ok: true, runId: await session.start(preset, request ?? null) });
+      const { preset, request, name } = StartBody.parse(body);
+      return json(res, { ok: true, runId: await session.start(preset, request ?? null, name ?? null) });
     }
     if (action === "answers") {
       session.answer(AnswersBody.parse(body).answers);
@@ -250,14 +260,19 @@ async function handle(o: ViewServerOptions, token: string, req: IncomingMessage,
   if (parts[0] !== "data") return notFound(res);
 
   const route = parts.slice(1).join("/");
-  if (route === "source.json") return json(res, { source: "local", runsDir: path.basename(o.runsDir) });
+  if (route === "source.json") return json(res, { source: "local", runsDir: path.basename(o.runsDir), demoRequest: o.demoRequest ?? null });
   if (route === "runs.json") return json(res, await listRuns(o.runsDir));
   if (route === "models.json") return json(res, listModels(o.config));
   if (route === "experiments.json") return json(res, await listExperiments(o.runsDir));
   if (route === "session.json") {
     // Readable only by this page: no CORS headers, and the host check above.
     return json(res, o.session
-      ? { enabled: true, token, request: o.session.request, presets: o.session.presets, ...o.session.snapshot() }
+      ? {
+          enabled: true, token, request: o.session.request, presets: o.session.presets,
+          // What each preset does, for the New run panel.
+          presetInfo: Object.fromEntries([...o.config.presets].map(([name, preset]) => [name, preset.description])),
+          ...o.session.snapshot(),
+        }
       : { enabled: false });
   }
 

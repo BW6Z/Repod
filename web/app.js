@@ -13,10 +13,13 @@ const state = {
   action: { key: null, node: null },
   // Collapsed parts stay as the user left them across refreshes.
   callsOpen: false,
-  planOpen: false,
   taskOpen: new Map(), // "<runId>:<taskId>" -> open
   tab: { run: null, name: null, picked: false }, // the open run's tab, and whether the user chose it
   last: null, // the open run's [runId, events, report], for switching tabs without fetching
+  demoRequest: null, // the demo request's text, to tell its runs from free-form ones
+  sourceKind: null, // "local" or "replay"
+  search: "", // the run list filter; its input node is kept across refreshes like the action form
+  searchNode: null,
 };
 
 // ---- small helpers ----------------------------------------------------------
@@ -48,6 +51,39 @@ const when = (ts) => (ts ? new Date(ts).toLocaleString([], { month: "short", day
 const STATUS_CLASS = { passed: "ok", completed: "ok", running: "live", "waiting for you": "live", failed: "bad", stopped: "bad", incomplete: "bad", interrupted: "bad", skipped: "warn" };
 const statusText = (status) => el("span", { class: `status ${STATUS_CLASS[status] ?? ""}` }, status);
 
+/** A run's title: the request's first clause, shortened. Taken from the request, never from a model. */
+function requestTitle(request) {
+  const first = String(request ?? "").split(/[:.\n]/)[0].trim();
+  return first.length > 64 ? `${first.slice(0, 63)}…` : first || "Untitled request";
+}
+
+/**
+ * "demo" when a run used the demo request (its contract, visible tests and
+ * holdout tests apply), "own" for any other request, null when the page does
+ * not know the demo request's text.
+ */
+function requestKind(request) {
+  if (!state.demoRequest || typeof request !== "string") return null;
+  return request.trim() === state.demoRequest.trim() ? "demo" : "own";
+}
+const KIND_LABEL = { demo: "Demo request", own: "Your own request" };
+
+/** "2m 48s" from milliseconds; null for a negative or missing span. */
+function span(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+const TIER_ROLE = { strong: "Strong", cheap: "Cheap", free: "Free" };
+
+/** The top bar's path: where the page is, as text. */
+function setCrumbs(...parts) {
+  document.getElementById("crumbs").replaceChildren(...parts.flatMap((p, i) => [
+    ...(i ? [el("span", { class: "sep", "aria-hidden": "true" }, "/")] : []),
+    el("span", { class: i === parts.length - 1 ? "here" : null }, p),
+  ]));
+}
+
 // Model APIs whose data counts as real: the Meta Model API (META_BASE_URL in
 // src/gateway/adapters/meta.ts) and OpenRouter, which serves Meta's
 // open-weight models for config/open-weights.
@@ -75,9 +111,12 @@ const sourceNote = (endpoint, prefix = "") => {
   return el("span", { class: `note ${warn ? "raised" : ""}` }, prefix + text);
 };
 
-function modelBadge(id) {
+/** A model's tier badge. `short` drops the vendor prefix (the plan card); the full id stays in the tooltip. */
+function modelBadge(id, short = false) {
   const tier = state.models[id]?.tier;
-  return el("span", { class: `badge ${tier ? `tier-${tier}` : ""}`, title: tier ? `${tier} tier` : null }, id);
+  const label = short ? String(id ?? "").split("/").pop() : id;
+  const title = [short ? id : null, tier ? `${tier} tier` : null].filter(Boolean).join(" · ");
+  return el("span", { class: `badge ${tier ? `tier-${tier}` : ""}`, title: title || null }, label);
 }
 
 /** A bar filled to `fraction`; the width is set through the DOM, which the strict CSP allows (style attributes it does not). */
@@ -110,8 +149,13 @@ async function act(action, body) {
   return data;
 }
 
-const message = (from, label, ...body) =>
-  el("div", { class: `msg ${from}` }, el("div", { class: "msg-from" }, label), el("div", { class: "bubble" }, ...body));
+/** One turn of the conversation: an avatar, who spoke (with a time or the model, muted), and what they said. */
+const message = (from, label, aside, ...body) =>
+  el("div", { class: `msg ${from}` },
+    el("span", { class: "avatar", "aria-hidden": "true" }, from === "meta" ? "M" : "Y"),
+    el("div", { class: "msg-body" },
+      el("div", { class: "msg-from" }, label, aside ? el("span", { class: "aside" }, aside) : null),
+      el("div", { class: "bubble" }, ...body)));
 
 function parseEvents(text) {
   return (text ?? "").split("\n").flatMap((line) => {
@@ -235,6 +279,9 @@ function showTab(name, taskId = null) {
 
 function renderRun(run, events, report) {
   state.last = [run, events, report]; // a tab switch re-renders without fetching again
+  // Kept nodes (the search box, the answer form) move into the new tree while
+  // it is built, before render() runs, which drops their focus; note it here.
+  const focused = document.activeElement;
   const view = summarize(events);
   const status = view.finished?.status ?? (view.started ? "running" : "probe");
   const session = state.session;
@@ -268,42 +315,171 @@ function renderRun(run, events, report) {
     : tab === "changes" ? changesList(report.changes, files)
     : overviewPanel(view, report, planned, status, waiting, ours);
 
+  setCrumbs("Runs", run);
   render([
     historyColumn(),
     el("section", { class: "main glass dense" },
-      runHead(run, view, report, waiting ? "waiting for you" : status),
+      runHead(run, view, report, waiting ? "waiting for you" : status, planned),
       tabs,
       el("div", { class: "panel", id: "run-panel", role: tabs ? "tabpanel" : null }, panel),
       waiting && tab === "conversation" ? actionForm(run, session.pending) : null),
-    column("side", costCard(view, report), compareCard(view, report)),
+    column("side", costCard(view, report), compareCard(view, report), view.started ? detailsCard(run, view, report) : null),
   ]);
+  if (focused && focused !== document.body && document.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
+}
+
+/** How long a run took: start to finish, or null while it runs. */
+const runSpan = (view) => (view.started && view.finished ? span(Date.parse(view.finished.ts) - Date.parse(view.started.ts)) : null);
+
+/** The models the run used, by role: the coordinator first, then the executors by tier. */
+function modelChips(view, planned, single) {
+  const chip = (role, id) => {
+    const tier = state.models[id]?.tier;
+    // A readable name ("Muse Spark Open"); the full model id stays in the tooltip.
+    return el("span", { class: `chip ${tier ? `tier-${tier}` : ""}`, title: id }, el("span", { class: "swatch" }), el("span", { class: "role" }, role), modelName(id));
+  };
+  const coordinator = view.calls.find((c) => c.role === "coordinator")?.model;
+  const executors = [...new Set([...planned.map((t) => t.model), ...view.calls.filter((c) => c.role === "executor").map((c) => c.model)])];
+  const chips = [
+    coordinator ? chip("Coordinator", coordinator) : null,
+    ...executors.map((id) => chip(single ? "Single model" : TIER_ROLE[state.models[id]?.tier] ?? "Executor", id)),
+  ].filter(Boolean);
+  return chips.length ? el("div", { class: "chips" }, chips) : null;
+}
+
+/** The inspector's facts about the run: which request, which setup, what it proved. */
+function detailsCard(run, view, report) {
+  const kind = requestKind(view.started.request);
+  const holdout = report?.holdout?.find((c) => c.name === "holdout-tests");
+  const rows = [
+    ["Request", kind === "demo" ? "Demo · verified" : kind === "own" ? "Your own · not holdout-verified" : "unknown"],
+    ["Preset", view.started.preset ?? "?"],
+    ["Model API", dataSource(view.started.endpoint)[0]],
+    ["Holdout", holdout ? `${holdout.testsPassed ?? "?"} / ${holdout.testsRun ?? "?"} passed` : report ? "not run" : "after the run"],
+    ["Duration", runSpan(view) ?? (view.finished ? "unknown" : "running")],
+    ["Run", run],
+  ];
+  return card("Run details", el("dl", { class: "kv details" }, rows.flatMap(([k, v]) => [el("dt", {}, k), el("dd", { title: v }, v)])));
+}
+
+const ARM_NAME = { a: "Arm A · one strong model", b: "Arm B · strong everywhere", c: "Arm C · routed" };
+
+/** A run's line in the list: the user's name for it, else experiment arm, kind of request, or probe; then its preset. */
+function runName(r) {
+  if (r.kind === "probe") return "Connectivity probe";
+  if (r.name) return r.name;
+  const arm = /^exp-.*-([abc])\d+$/i.exec(r.id)?.[1]?.toLowerCase();
+  if (arm) return ARM_NAME[arm];
+  const kind = requestKind(r.request);
+  return `${kind ? KIND_LABEL[kind] : r.mode === "single-model" ? "Single model" : "Meta"} · ${r.preset ?? "?"}`;
+}
+
+/** Stroked icons for the task timeline and check chips. */
+const ICON_PATH = { x: "M6 6l12 12M18 6 6 18", check: "m5 12 5 5 9-10", arrow: "M4 12h12M12 6l6 6-6 6", dot: "M12 12h.01" };
+
+/** One of ICON_PATH as an inline SVG; like the magnifier, built in the SVG namespace. */
+function icon(name) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  // The dot is a zero-length line, drawn round by a wide stroke.
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": name === "dot" ? "8" : "3", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(k, v);
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", ICON_PATH[name]);
+  svg.append(path);
+  return svg;
+}
+
+/** A magnifier; SVG needs its own namespace, which el() does not set. */
+function searchIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "aria-hidden": "true" })) svg.setAttribute(k, v);
+  const circle = document.createElementNS(ns, "circle");
+  circle.setAttribute("cx", "11");
+  circle.setAttribute("cy", "11");
+  circle.setAttribute("r", "7");
+  const handle = document.createElementNS(ns, "path");
+  handle.setAttribute("d", "m20 20-3.5-3.5");
+  svg.append(circle, handle);
+  return svg;
+}
+
+/** "6:23 PM" for today, "Nov 4 · 6:23 PM" otherwise. */
+function shortWhen(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} · ${time}`;
+}
+
+/** The run list's filter; the same input node across refreshes keeps typing and focus. */
+function searchBox() {
+  if (!state.searchNode) {
+    const input = el("input", { type: "search", class: "search-input", placeholder: "Search runs", "aria-label": "Search runs", value: state.search });
+    input.addEventListener("input", () => {
+      state.search = input.value;
+      if (state.view === "run" && state.last) renderRun(...state.last);
+    });
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    state.searchNode = el("label", { class: "search" }, searchIcon(), input, el("kbd", {}, mac ? "⌘K" : "Ctrl K"));
+  }
+  return state.searchNode;
 }
 
 function historyColumn() {
-  const runs = state.runs.slice(0, 40);
+  const query = state.search.trim().toLowerCase();
+  const matches = (r) => !query || [runName(r), r.id, r.status, r.preset, r.request].some((v) => typeof v === "string" && v.toLowerCase().includes(query));
+  const runs = state.runs.filter(matches).slice(0, 60);
+  // Runs from the page or `run`, experiment runs, then connectivity probes.
+  const groups = [
+    ["Runs", runs.filter((r) => r.kind !== "probe" && !r.id.startsWith("exp-"))],
+    ["Experiments", runs.filter((r) => r.kind !== "probe" && r.id.startsWith("exp-"))],
+    ["Probes", runs.filter((r) => r.kind === "probe")],
+  ].filter(([, list]) => list.length);
+  const item = (r) => {
+    const dot = r.kind === "probe" ? "" : r.status === "running" ? "running" : STATUS_CLASS[r.status] ?? "";
+    return el("li", {}, el("button", { type: "button", "aria-current": String(r.id === state.runId), title: r.id, onclick: () => openRun(r.id) },
+      el("span", { class: "t" }, el("span", { class: `dot ${dot}` }), el("span", { class: "name" }, runName(r)),
+        el("span", { class: "c num" }, r.costUsd !== null ? usd(r.costUsd) : "")),
+      el("span", { class: "s num" }, [shortWhen(r.startedAt) || r.id, r.kind === "probe" ? null : r.status,
+        r.endpoint && isLocalApi(r.endpoint) ? "rehearsal" : r.endpoint && !REAL_APIS.has(r.endpoint) ? "unknown API" : null].filter(Boolean).join(" · "))));
+  };
   return el("aside", { class: "history glass", "aria-label": "Runs" },
-    el("h2", {}, "Runs"),
-    runs.length
-      ? el("ul", { class: "runs" }, runs.map((r) => {
-          const name = r.kind === "probe" ? "Connectivity probe" : `${r.mode === "single-model" ? "Single model" : "Meta"} · ${r.preset ?? "?"}`;
-          const dot = r.kind === "probe" ? "" : r.status === "running" ? "running" : STATUS_CLASS[r.status] ?? "";
-          return el("li", {}, el("button", { type: "button", "aria-current": String(r.id === state.runId), title: r.id, onclick: () => openRun(r.id) },
-            el("span", { class: "t" }, el("span", { class: `dot ${dot}` }), name),
-            el("span", { class: "s num" }, [when(r.startedAt) || r.id, r.kind === "probe" ? null : r.status, r.costUsd !== null ? usd(r.costUsd) : null,
-              r.endpoint && isLocalApi(r.endpoint) ? "rehearsal" : r.endpoint && !REAL_APIS.has(r.endpoint) ? "unknown API" : null].filter(Boolean).join(" · "))));
-        }))
-      : empty("No runs yet."),
+    el("div", { class: "workspace" },
+      el("div", {}, el("b", {}, "Repod"), el("small", {}, "sample library")),
+      state.sourceKind ? el("span", { class: "pill kind" }, state.sourceKind === "replay" ? "Replay" : "Live") : null),
+    searchBox(),
+    groups.length
+      ? groups.flatMap(([label, list]) => [
+          el("div", { class: "group-label" }, el("span", {}, label), el("span", { class: "num" }, list.length)),
+          el("ul", { class: "runs" }, list.map(item)),
+        ])
+      : empty(state.runs.length ? "No run matches." : "No runs yet."),
     state.source ? el("p", { class: "note" }, state.source) : null);
 }
 
-/** The run's name and state; status is "waiting for you" while Meta waits on this page. */
-function runHead(run, view, report, status) {
+/**
+ * The run's title (from its request), state and kind of request, then when
+ * it ran, how long, how many calls, and which models it used. The status
+ * reads "waiting for you" while Meta waits on this page.
+ */
+function runHead(run, view, report, status, planned) {
+  if (!view.started) return el("div", { class: "run-head" }, el("h1", { class: "run-name" }, "Connectivity probe"), el("span", { class: "note" }, run));
   const single = report?.mode === "single-model";
+  const kind = requestKind(view.started.request);
+  const took = runSpan(view);
   return el("div", { class: "run-head" },
-    el("h1", { class: "run-name" }, view.started ? `${single ? "Single model" : "Meta"} · ${view.started.preset} preset` : "Connectivity probe"),
-    view.started ? statusText(status) : null,
-    el("span", { class: "note" }, [when(view.started?.ts), single ? "no coordinator (experiment arm A)" : null, run].filter(Boolean).join(" · ")),
-    view.started ? sourceNote(view.started.endpoint) : null);
+    el("h1", { class: "run-name", title: view.started.request }, view.started.name || requestTitle(view.started.request)),
+    statusText(status),
+    kind ? el("span", { class: `pill kind ${kind}` }, kind === "demo" ? "Demo request · verified" : "Your own request") : null,
+    el("div", { class: "meta-row num" }, [
+      when(view.started.ts),
+      took,
+      plural(view.calls.length, "model call"),
+      `${single ? "Single model" : "Meta"} · ${view.started.preset} preset`,
+    ].filter(Boolean).map((text) => el("span", {}, text))),
+    sourceNote(view.started.endpoint),
+    modelChips(view, planned, single));
 }
 
 // ---- overview ----------------------------------------------------------------------
@@ -320,9 +496,10 @@ function overviewPanel(view, report, planned, status, waiting, ours) {
         : "This run has no report."),
     planned.length ? routeBlock(view, report, planned) : null,
     summary || outcome.length
-      ? el("div", { class: "outcome" },
-          el("div", { class: "msg-from" }, summary ? "Meta · summary" : "Outcome"),
-          el("div", { class: "bubble" }, summary ? el("p", { class: "request" }, summary) : null, outcome))
+      ? el("div", { class: "block card-block outcome" },
+          el("div", { class: "block-head" }, el("h2", {}, summary ? "Meta's summary" : "Outcome"),
+            summary ? el("span", { class: "note" }, "Written by the coordinator; figures come from checks") : null),
+          el("div", { class: "card-body" }, summary ? el("p", { class: "request" }, summary) : null, outcome))
       : null,
     ours && session.state === "failed" ? el("p", { class: "error" }, `The run failed: ${session.error}`) : null,
   ];
@@ -330,75 +507,120 @@ function overviewPanel(view, report, planned, status, waiting, ours) {
 
 /** One line per task: the model it ran on (with any escalation), its result and cost. A line opens the task. */
 function routeBlock(view, report, planned) {
-  return el("div", { class: "block" },
-    el("h2", {}, report?.mode === "single-model" ? "The single model's task" : "How Meta routed the work"),
-    el("div", { class: "route-list" }, planned.map((t) => {
-      const progress = taskProgress(view, report, t);
-      return el("button", { type: "button", class: "route-row", onclick: () => showTab("tasks", t.id) },
-        el("span", { class: "id" }, t.id),
-        el("span", { class: "cell" }, el("span", { class: "title" }, t.title), modelRoute(t, progress)),
-        el("span", { class: "meta" }, statusText(progress.status), progress.attempts ? ` · ${plural(progress.attempts, "attempt")}` : ""),
-        el("span", { class: "meta num cost" }, progress.costUsd !== null ? usd(progress.costUsd) : ""));
-    })),
-    el("p", { class: "note" }, "Select a task to see its attempts and the decisions after each failure."));
+  return el("div", { class: "block card-block" },
+    el("div", { class: "block-head" },
+      el("h2", {}, report?.mode === "single-model" ? "The single model's task" : "How Meta routed the work"),
+      el("span", { class: "note" }, "Select a task to see its attempts")),
+    el("div", { class: "route-list" },
+      el("div", { class: "route-row route-head", "aria-hidden": "true" },
+        el("span", {}, "Task"), el("span", {}, "Model"), el("span", { class: "labels" }, "Labels"), el("span", {}, "Result"), el("span", { class: "cost" }, "Cost")),
+      planned.map((t) => {
+        const progress = taskProgress(view, report, t);
+        // The task id stays in the tooltip; the row reads as the plan's title and Meta's reason.
+        return el("button", { type: "button", class: "route-row", title: t.id, onclick: () => showTab("tasks", t.id) },
+          el("span", { class: "cell task-cell" }, el("span", { class: "title" }, t.title),
+            t.reason ? el("span", { class: "why" }, t.reason) : null),
+          el("span", { class: "cell" }, modelRoute(t, progress, true)),
+          el("span", { class: "meta labels" }, `${t.complexity} · ${t.impact}`),
+          el("span", { class: "meta" }, resultPill(progress)),
+          el("span", { class: "num cost" }, progress.costUsd !== null ? usd(progress.costUsd) : ""));
+      })));
+}
+
+/**
+ * "Passed", "Passed · 1 repair", "Failed · escalated": the status, then what
+ * the decisions after failed attempts were. Without decisions (older runs),
+ * extra attempts are counted instead.
+ */
+function resultPill(progress) {
+  const decisions = progress.timeline.filter((x) => x.kind === "decision");
+  const repairs = decisions.filter((d) => d.decision === "repair").length;
+  const escalated = decisions.some((d) => d.decision === "escalate");
+  const extra = decisions.length
+    ? [repairs ? plural(repairs, "repair") : null, escalated ? "escalated" : null]
+    : [progress.attempts > 1 ? plural(progress.attempts, "attempt") : null];
+  const status = String(progress.status);
+  return el("span", { class: `status ${STATUS_CLASS[status] ?? ""}` },
+    [status.charAt(0).toUpperCase() + status.slice(1), ...extra].filter(Boolean).join(" · "));
 }
 
 // ---- conversation -----------------------------------------------------------------
 
-/** The dialogue only: the request, Meta's questions and plans, the user's answers and decisions. */
+/** "Muse Spark Open" from "meta/muse-spark-open"; sizes such as "30b" in capitals. */
+function modelName(id) {
+  return String(id ?? "").split("/").pop().split("-")
+    .map((w) => (/^\d+b$/i.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+}
+
+/**
+ * The dialogue only: the request, Meta's questions and plans, the user's
+ * answers and decisions. The plan (the one under decision, else the approved
+ * one) sits inside Meta's last plan message, as Meta proposed it.
+ */
 function conversationPanel(view, report, ours) {
   const session = state.session;
-  const items = [message("user", "You", el("p", { class: "request" }, view.started.request))];
-  for (const turn of view.conversation) {
+  const pending = ours && session.state === "waiting" ? session.pending : null;
+  const planned = plannedTasks(view, report);
+  const coordinator = view.calls.find((c) => c.role === "coordinator")?.model;
+  const lastPlan = view.conversation.map((t) => t.from !== "user" && t.kind === "plan").lastIndexOf(true);
+  const planBody = () => (pending?.kind === "plan"
+    ? [planCard(pending.tasks), pending.warnings.map((w) => el("p", { class: "note raised" }, `Warning: ${w}`))]
+    : planned.length ? planCard(planned) : null);
+
+  const items = [message("user", "You", clock(view.started.ts), el("p", { class: "request" }, view.started.request))];
+  view.conversation.forEach((turn, i) => {
     if (turn.from === "user" && turn.kind === "approval") {
       items.push(el("div", { class: "decision" }, `You approved the plan · ${clock(turn.ts)}`));
     } else if (turn.from === "user") {
-      items.push(message("user", "You", el("p", { class: "request" }, turn.text)));
+      items.push(message("user", "You", clock(turn.ts), el("p", { class: "request" }, turn.text)));
     } else {
-      items.push(message("meta", turn.kind === "plan" ? "Meta · plan" : "Meta",
+      items.push(message("meta", turn.kind === "plan" ? "Meta · plan" : "Meta", coordinator ? modelName(coordinator) : null,
         turn.text ? el("p", { class: "request" }, turn.text) : null,
         turn.questions?.length
           ? el("ul", { class: "questions" }, turn.questions.map((q) =>
               el("li", {}, q.question, el("div", { class: "note" }, [q.why, `Default: ${q.default}`].filter(Boolean).join(" · ")))))
-          : null));
+          : null,
+        i === lastPlan ? planBody() : null));
     }
-  }
+  });
 
-  const pending = ours && session.state === "waiting" ? session.pending : null;
-  const planned = plannedTasks(view, report);
-  if (pending?.kind === "plan") {
-    // The plan under decision is open; the decision bar sits below the thread.
+  // No plan message to hold the plan (arm A plans nothing): show it on its own.
+  if (lastPlan < 0 && (pending?.kind === "plan" || planned.length)) {
     items.push(el("div", { class: "block" },
-      el("h2", {}, pending.canRevise ? "Proposed plan" : "Revised plan"),
-      el("div", { class: "plan-list" }, pending.tasks.map(planRow)),
-      pending.warnings.map((w) => el("p", { class: "note raised" }, `Warning: ${w}`))));
-  } else if (planned.length) {
-    // Folded: the plan's progress lives on the Tasks tab.
-    const details = el("details", { class: "block", open: state.planOpen },
-      el("summary", {}, report?.mode === "single-model" ? "The task (no planning in arm A)" : `Approved plan · ${plural(planned.length, "task")}`),
-      el("div", { class: "plan-list" }, planned.map(planRow)));
-    details.addEventListener("toggle", () => (state.planOpen = details.open));
-    items.push(details);
-  } else if (!view.finished && !pending) {
+      el("h2", {}, report?.mode === "single-model" ? "The task (no planning in arm A)" : "Plan"), planBody()));
+  } else if (lastPlan < 0 && !view.finished && !pending) {
     items.push(el("p", { class: "note" }, "Waiting for Meta..."));
   }
   if (view.finished) items.push(el("div", { class: "decision" }, `Run ${view.finished.status} · ${clock(view.finished.ts)}`));
   return el("div", { class: "thread" }, items);
 }
 
-/** A planned task as Meta proposed it: its model and why, and what it writes. */
-function planRow(t) {
-  return el("div", { class: "plan-row" },
-    el("span", { class: "id" }, t.id),
-    el("div", { class: "plan-body" }, el("div", { class: "cell" }, el("span", { class: "title" }, t.title), modelBadge(t.model)), taskFacts(t)));
+/** A plan as a card: per task its id, title, order and files, and the model it goes to. */
+function planCard(tasks) {
+  return el("div", { class: "plan-card" }, tasks.map((t) => {
+    const scope = [t.dependsOn?.length ? `After ${t.dependsOn.join(", ")}` : null, t.writeFiles?.length ? `writes ${t.writeFiles.join(", ")}` : null].filter(Boolean).join(" · ");
+    return el("div", { class: "plan-row" },
+      el("span", { class: "id", title: t.id }, t.id),
+      el("div", { class: "plan-body" },
+        el("span", { class: "title" }, t.title),
+        scope ? el("span", { class: "note" }, scope.charAt(0).toUpperCase() + scope.slice(1)) : null,
+        t.floorReason ? el("span", { class: "note raised" }, `Raised by the program: ${t.floorReason}`) : null),
+      modelBadge(t.model, true));
+  }));
 }
 
-function taskFacts(t) {
+/** A task's labels and scope in one row, then Meta's reason and any change the program made. */
+function taskFacts(t, costUsd = null) {
+  const fact = (label, value, cls = "") => el("span", {}, `${label} `, el("b", { class: cls }, value));
   return [
-    el("p", { class: "note" }, `complexity: ${t.complexity} · impact: ${t.impact}${t.reason ? ` — ${t.reason}` : ""}`),
+    el("div", { class: "facts" },
+      fact("Complexity", t.complexity),
+      fact("Impact", t.impact),
+      costUsd !== null ? fact("Cost", usd(costUsd), "num") : null,
+      t.dependsOn?.length ? fact("After", t.dependsOn.join(", ")) : null,
+      t.writeFiles?.length ? fact("Writes", t.writeFiles.join(", "), "mono") : null),
+    t.reason ? el("p", { class: "note" }, t.reason) : null,
     t.floorReason ? el("p", { class: "note raised" }, `Raised by the program: ${t.floorReason}`) : null,
-    t.dependsOn?.length ? el("p", { class: "note" }, `After ${t.dependsOn.join(", ")}`) : null,
-    t.writeFiles?.length ? el("p", { class: "note mono" }, `Writes ${t.writeFiles.join(", ")}`) : null,
   ];
 }
 
@@ -443,14 +665,24 @@ function tasksPanel(view, report, planned, waiting) {
 }
 
 /** The model a task was planned on, with an arrow to the one it ended on when it escalated. */
-function modelRoute(t, progress) {
+function modelRoute(t, progress, short = false) {
   const used = progress?.model ?? t.model;
   return used !== t.model
-    ? el("span", { class: "route", title: "escalated to a stronger model" }, modelBadge(t.model), el("span", { class: "arrow" }, "→"), modelBadge(used))
-    : modelBadge(t.model);
+    ? el("span", { class: "route", title: "escalated to a stronger model" }, modelBadge(t.model, short), el("span", { class: "arrow" }, "→"), modelBadge(used, short))
+    : modelBadge(t.model, short);
 }
 
 const DECISION_TEXT = { repair: "repair on", escalate: "escalate to", stop: "stop the task" };
+// Check names as the pipeline records them, in words.
+const CHECK_LABEL = { typecheck: "type check" };
+const checkLabel = (name) => CHECK_LABEL[name] ?? String(name).replace(/-/g, " ");
+
+/** One step on a task's timeline: a round node (its colour from cls), then the step. */
+function timelineStep(cls, iconName, ...body) {
+  return el("li", { class: `step ${cls}` },
+    el("span", { class: "node", "aria-hidden": "true" }, icon(iconName)),
+    el("div", { class: "step-body" }, ...body));
+}
 
 function taskCard(t, progress) {
   const key = `${state.runId}:${t.id}`;
@@ -466,7 +698,7 @@ function taskCard(t, progress) {
           ? el("span", { class: "note num" }, `${plural(progress.attempts, "attempt")}${progress.costUsd !== null ? ` · ${usd(progress.costUsd)}` : ""}`)
           : null)),
     el("div", { class: "task-body" },
-      taskFacts(t),
+      taskFacts(t, progress.costUsd),
       progress.reason ? el("p", { class: "note" }, progress.reason) : null,
       progress.timeline.length
         ? el("ol", { class: "timeline", "aria-label": "Attempts and decisions" }, progress.timeline.map((step, i, steps) =>
@@ -477,32 +709,35 @@ function taskCard(t, progress) {
 }
 
 function attemptStep(attempt, next, progress, last) {
+  const running = last && attempt.calls.some((c) => c.outcome === null);
   // The failure comes from the decision that followed; the last attempt's
-  // result is the task's own status.
-  const result = next?.kind === "decision"
-    ? el("span", { class: "status bad" }, next.failure)
-    : last && attempt.calls.some((c) => c.outcome === null) ? statusText("running")
-    : last ? statusText(progress.status)
-    : null;
+  // result is the task's own status. The class colours the attempt's node.
+  const outcome = next?.kind === "decision" ? "bad" : running ? "live" : last ? STATUS_CLASS[progress.status] ?? "" : "";
+  const result = next?.kind === "decision" ? next.failure : running ? "running" : last ? progress.status : null;
   const cost = pricedSum(attempt.calls);
-  return el("li", { class: "attempt" },
-    el("div", { class: "head" }, el("span", { class: "step" }, `Attempt ${attempt.n}`), modelBadge(attempt.model),
-      cost !== null ? el("span", { class: "note num" }, usd(cost)) : null),
-    result,
+  const aside = [result, cost !== null ? usd(cost) : null].filter(Boolean).join(" · ");
+  return timelineStep(outcome, outcome === "bad" ? "x" : outcome === "ok" ? "check" : "dot",
+    el("div", { class: "step-head" }, `Attempt ${attempt.n}`, modelBadge(attempt.model, true),
+      aside ? el("span", { class: "aside num" }, aside) : null),
     attempt.checks.length
-      ? el("span", { class: "note" }, attempt.checks.map((c) => `${c.check} ${c.passed ? "passed" : "failed"}${c.testsRun !== null ? ` (${c.testsRun} tests)` : ""}`).join(" · "))
+      ? el("div", { class: "checks" }, attempt.checks.map((c) =>
+          el("span", { class: `ck ${c.passed ? "ok" : "bad"}`, title: `${checkLabel(c.check)} ${c.passed ? "passed" : "failed"}` },
+            icon(c.passed ? "check" : "x"),
+            `${checkLabel(c.check)}${typeof c.testsRun === "number" ? ` · ${c.testsRun}` : ""}`,
+            el("span", { class: "visually-hidden" }, c.passed ? " passed" : " failed"))))
       : null);
 }
 
+/** "Meta decided: repair on the same model", or an escalation with the model it moves to; then the reason. */
 function decisionStep(d) {
-  return el("li", { class: `decided ${d.by}` },
-    el("div", { class: "head" },
-      el("span", { class: "who" }, d.by === "meta" ? "Meta" : "Program"),
-      DECISION_TEXT[d.decision],
-      d.toModel ? modelBadge(d.toModel) : null,
-      d.call && typeof d.call.costUsd === "number" ? el("span", { class: "note num" }, usd(d.call.costUsd)) : null),
-    d.requested ? el("span", { class: "note raised" }, `Meta chose ${d.requested}, which the limits did not allow here`) : null,
-    d.reason ? el("span", { class: "note" }, d.reason) : null);
+  const sameModel = d.decision === "repair" && (!d.toModel || d.toModel === d.fromModel);
+  const what = sameModel ? "repair on the same model" : DECISION_TEXT[d.decision];
+  const chip = !sameModel && d.decision !== "stop" && d.toModel ? modelBadge(d.toModel, true) : null;
+  return timelineStep(`decided ${d.by}`, d.decision === "stop" ? "x" : "arrow",
+    el("div", { class: "step-head" }, `${d.by === "meta" ? "Meta" : "The program"} decided: ${what}`, chip,
+      d.call && typeof d.call.costUsd === "number" ? el("span", { class: "aside num" }, usd(d.call.costUsd)) : null),
+    d.requested ? el("p", { class: "note raised" }, `Meta chose ${d.requested}, which the limits did not allow here`) : null,
+    d.reason ? el("div", { class: "reason-box" }, el("b", {}, "Reason"), ` · ${d.reason}`) : null);
 }
 
 // ---- what the run delivered ---------------------------------------------------------
@@ -524,9 +759,17 @@ function acceptance(report) {
       : "not run", holdout ? holdout.passed && report.frozenIntact !== false : null],
     ["Blocking review findings", report.mode === "single-model" ? "no review (arm A)" : blocking ? String(blocking) : "none", blocking ? false : null],
   ];
-  return el("div", { class: "acceptance" }, rows.map(([label, value, ok]) =>
+  // The tile's big figure; the line under it keeps the full wording above.
+  const figures = [
+    tasks.length ? `${passed} / ${tasks.length}` : "–",
+    integrated.length ? `${integrated.length - integratedFailed} / ${integrated.length}` : "–",
+    holdout ? `${holdout.testsPassed ?? "?"} / ${holdout.testsRun ?? "?"}` : "–",
+    report.mode === "single-model" ? "–" : String(blocking),
+  ];
+  return el("div", { class: "acceptance" }, rows.map(([label, value, ok], i) =>
     el("div", { class: "stat" },
       el("div", { class: "note" }, label),
+      el("div", { class: "stat-figure num" }, figures[i]),
       el("div", { class: `stat-value status ${ok === true ? "ok" : ok === false ? "bad" : ""}` }, value))));
 }
 
@@ -573,8 +816,8 @@ function diffFiles(diff) {
 function fileDiff(file) {
   const body = el("pre", { class: "diff" });
   const details = el("details", { class: "file" },
-    el("summary", {}, el("span", { class: "mono" }, file.path), el("span", { class: "note" }, file.status),
-      el("span", { class: "note num" }, `+${file.added} \u2212${file.removed}`)),
+    el("summary", {}, el("span", { class: "mono path" }, file.path), el("span", { class: `tag ${file.status === "added" ? "new" : ""}` }, file.status),
+      el("span", { class: "delta num" }, el("span", { class: "add" }, `+${file.added}`), el("span", { class: "del" }, `\u2212${file.removed}`))),
     body);
   // Filled on first open: a large diff costs nothing until someone reads it.
   details.addEventListener("toggle", () => {
@@ -595,7 +838,9 @@ function outcomeDetails(report) {
     report.problems?.length ? el("ul", { class: "problems" }, report.problems.map((p) => el("li", {}, p))) : null,
     report.pendingCheckGroups?.length ? el("p", { class: "note" }, `Not verified: ${report.pendingCheckGroups.join(", ")}`) : null,
     report.findings?.length
-      ? el("ul", { class: "findings" }, report.findings.map((f) => el("li", {}, statusText(f.severity), ` ${f.taskId} · ${f.file}: ${f.evidence}`)))
+      ? el("ul", { class: "findings" }, report.findings.map((f) => el("li", {},
+          el("span", { class: `sev ${f.severity}` }, f.severity.replace(/_/g, " ")),
+          el("span", { title: f.taskId }, el("span", { class: "mono" }, f.file), ` · ${f.evidence}`))))
       : null,
   ].filter(Boolean);
 }
@@ -661,10 +906,24 @@ function costCard(view, report) {
     "Cost at list price",
     el("div", { class: "metric num" }, usd(total)),
     el("p", { class: "note" }, `${plural(view.calls.length, "model call")}${unknown ? `, ${unknown} with unknown cost (billed at their reservation)` : ""}${view.refused.length ? `, ${view.refused.length} refused by the budget` : ""}`),
+    phases.length ? phaseStack(phases) : null,
     phases.length
-      ? el("dl", { class: "kv num" }, phases.flatMap(([phase, value]) => [el("dt", {}, phase), el("dd", {}, usd(value))]))
+      ? el("dl", { class: "kv num legend" }, phases.flatMap(([phase, value]) => [
+          el("dt", {}, el("i", { class: `ph ph-${phase}`, "aria-hidden": "true" }), phase), el("dd", {}, usd(value))]))
       : null,
   );
+}
+
+/** One bar split by cost phase; widths through the DOM, which the strict CSP allows. A phase with unknown cost is left out. */
+function phaseStack(phases) {
+  const known = phases.filter(([, v]) => typeof v === "number" && v > 0);
+  const total = known.reduce((sum, [, v]) => sum + v, 0);
+  if (!total) return null;
+  return el("div", { class: "stack", "aria-hidden": "true" }, known.map(([phase, v]) => {
+    const part = el("i", { class: `ph ph-${phase}` });
+    part.style.width = `${((v / total) * 100).toFixed(1)}%`;
+    return part;
+  }));
 }
 
 const ARM_LABEL = { A: "One strong model (arm A)", B: "Meta, quality preset (arm B)", C: "Meta, saving preset (arm C)" };
@@ -730,7 +989,7 @@ function renderExperiments(experiments) {
   }
   render([column("", experiments.map((x) => card(
     null,
-    el("div", { class: "row" }, el("h2", {}, `${x.label}: ${x.experimentId}`), statusText(x.stoppedEarly ? "stopped early" : "completed")),
+    el("div", { class: "exp-head" }, el("h2", {}, `${x.label}: ${x.experimentId}`), statusText(x.stoppedEarly ? "stopped early" : "completed")),
     x.stoppedEarly ? el("p", { class: "note" }, x.stoppedEarly) : null,
     el("p", { class: "note" }, `Started ${when(x.startedAt)} · source ${x.sourceCommit ?? "unknown"} · median (min–max)`),
     experimentCaveats(x),
@@ -752,24 +1011,59 @@ function renderExperiments(experiments) {
   )))]);
 }
 
-// ---- new run ------------------------------------------------------------------------
+// ---- new run: a panel over the page -------------------------------------------------
 
-function renderNewRun() {
+/** The New run panel and its backdrop, built once; the run behind it keeps updating while it is open. */
+function sheet() {
+  if (!state.sheet) {
+    const scrim = el("div", { class: "scrim", hidden: true, onclick: () => closeNewRun() });
+    const body = el("div", { class: "sheet-body" });
+    const panel = el("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-labelledby": "sheet-title", hidden: true },
+      el("div", { class: "sheet-head" },
+        el("h2", { id: "sheet-title" }, "New run"),
+        el("button", { type: "button", class: "btn quiet", "aria-label": "Close", onclick: () => closeNewRun() }, "Esc")),
+      body);
+    document.body.append(scrim, panel);
+    state.sheet = { scrim, panel, body };
+  }
+  return state.sheet;
+}
+
+async function openNewRun() {
+  if (!state.session) return;
+  state.session = (await fetchJson("data/session.json")) ?? state.session;
+  const s = sheet();
+  s.body.replaceChildren(newRunForm());
+  s.scrim.hidden = false;
+  s.panel.hidden = false;
+  s.panel.querySelector("input")?.focus();
+}
+
+function closeNewRun() {
+  const s = state.sheet;
+  if (!s || s.panel.hidden) return;
+  s.scrim.hidden = true;
+  s.panel.hidden = true;
+  document.getElementById("new-run")?.focus();
+}
+
+/** The form inside the panel: which request, which preset, then start. */
+function newRunForm() {
   const session = state.session;
   const busy = ["starting", "running", "waiting"].includes(session.state);
-  const preset = el("select", { class: "input", "aria-label": "Preset" }, session.presets.map((p) => el("option", { value: p }, p)));
-  preset.value = session.presets.includes("saving") ? "saving" : session.presets[0];
   const start = el("button", { type: "submit", class: "btn primary", disabled: busy }, "Start run");
   const errorLine = el("p", { class: "error", hidden: true });
 
   // Two kinds of request on the same sample library. Only the demo request has
   // the contract, visible tests and holdout tests written for it; a request of
   // your own is judged by the type check and the library's existing tests.
+  // An optional name for the list and the run's header; the server keeps one short line.
+  const name = el("input", { type: "text", class: "input", maxlength: 80, autocomplete: "off", placeholder: "For example: retry test with the cheap model", "aria-label": "Run name" });
   const own = el("textarea", { class: "input", rows: 4, maxlength: 4000, placeholder: "Describe a change to the sample library, for example: add a function that counts tasks by priority, export it and test it.", "aria-label": "Your request" });
   const demoChoice = el("input", { type: "radio", name: "request-kind", value: "demo", checked: true });
   const ownChoice = el("input", { type: "radio", name: "request-kind", value: "own" });
   const demoPart = el("div", { class: "start-part" },
-    message("user", "You", el("p", { class: "request" }, session.request)),
+    el("div", { class: "request-box" }, session.request),
     el("p", { class: "note" }, "Checked by its visible tests and, when the page was started with --holdout, by hidden holdout tests."));
   const ownPart = el("div", { class: "start-part", hidden: true },
     own,
@@ -781,17 +1075,34 @@ function renderNewRun() {
   demoChoice.addEventListener("change", showKind);
   ownChoice.addEventListener("change", showKind);
 
+  // Presets as a segmented control, each explained by its description in config/.
+  let preset = session.presets.includes("saving") ? "saving" : session.presets[0];
+  const help = el("p", { class: "note seg-help" });
+  const segments = session.presets.map((p) => el("button", { type: "button", "aria-pressed": "false" }, p));
+  const pick = (p) => {
+    preset = p;
+    segments.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent === p)));
+    help.textContent = session.presetInfo?.[p] ?? "";
+  };
+  segments.forEach((b) => b.addEventListener("click", () => pick(b.textContent)));
+  pick(preset);
+
+  const choice = (input, title, text) => el("label", { class: "choice card-choice" }, input, el("span", {}, el("b", {}, title), el("span", { class: "note" }, text)));
   const form = el("form", { class: "start-form" },
-    el("div", { class: "choices", role: "radiogroup", "aria-label": "Request" },
-      el("label", { class: "choice" }, demoChoice, "The demo request (verified)"),
-      el("label", { class: "choice" }, ownChoice, "Your own request")),
+    el("label", { class: "field" }, el("span", {}, "Name ", el("span", { class: "note" }, "optional")), name),
+    el("div", { class: "field" }, el("span", {}, "Request"),
+      el("div", { class: "choices", role: "radiogroup", "aria-label": "Request" },
+        choice(demoChoice, "Demo request", "Verified: its contract, visible tests and hidden holdout tests apply."),
+        choice(ownChoice, "Your own request", "On the same sample library; judged by the type check and its existing tests only."))),
     demoPart,
     ownPart,
-    el("label", { class: "field" }, el("span", {}, "Preset"), preset),
-    el("p", { class: "note raised" }, "Costs real money: every model call is billed to the key in MODEL_API_KEY, within the budgets in config/limits.json."),
+    el("div", { class: "field" }, el("span", {}, "Preset"), el("div", { class: "seg", role: "group", "aria-label": "Preset" }, segments), help),
     busy ? el("p", { class: "row" }, "A run started from this page is in progress.",
-      el("button", { type: "button", class: "link", onclick: () => openRun(session.runId) }, "Open it")) : null,
-    el("div", { class: "buttons" }, start), errorLine);
+      el("button", { type: "button", class: "link", onclick: () => { closeNewRun(); openRun(session.runId); } }, "Open it")) : null,
+    el("div", { class: "sheet-foot" },
+      el("span", { class: "note raised" }, "Costs real money: billed to the key in MODEL_API_KEY, within config/limits.json."),
+      start),
+    errorLine);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const text = own.value.trim();
@@ -803,9 +1114,15 @@ function renderNewRun() {
     start.disabled = true;
     errorLine.hidden = true;
     try {
-      const { runId } = await act("start", ownChoice.checked ? { preset: preset.value, request: text } : { preset: preset.value });
+      const label = name.value.trim();
+      const { runId } = await act("start", {
+        preset,
+        ...(ownChoice.checked ? { request: text } : {}),
+        ...(label ? { name: label } : {}),
+      });
       state.runs = (await fetchJson("data/runs.json")) ?? state.runs;
       fillPicker();
+      closeNewRun();
       openRun(runId);
     } catch (error) {
       errorLine.textContent = error.message;
@@ -813,7 +1130,7 @@ function renderNewRun() {
       start.disabled = false;
     }
   });
-  render([el("section", { class: "main glass dense" }, el("div", { class: "thread" }, el("h2", {}, "Start a run"), form))]);
+  return form;
 }
 
 // ---- navigation and polling --------------------------------------------------------
@@ -823,6 +1140,7 @@ async function loadRun(runId, wasLive = false) {
   state.runId = runId;
   if (!runId) {
     setLive(null);
+    setCrumbs("Runs");
     render([card("Runs", state.session
       ? empty("No runs recorded yet. Start one from New run.")
       : el("p", { class: "empty" }, "No runs recorded yet. Start one with ", el("code", {}, "npm run repod -- run"), "."))]);
@@ -867,10 +1185,10 @@ async function setView(view) {
   if (state.session) state.session = (await fetchJson("data/session.json")) ?? state.session;
   liveFromSession();
   if (view === "experiments") {
+    setCrumbs("Experiments");
     state.experiments = (await fetchJson("data/experiments.json")) ?? state.experiments;
     renderExperiments(state.experiments);
   }
-  if (view === "new") renderNewRun();
 }
 
 /** Reloads the current run at once, after the user answered. */
@@ -881,11 +1199,56 @@ function refresh() {
 function fillPicker() {
   const picker = document.getElementById("run-picker");
   picker.replaceChildren(...state.runs.map((r) =>
-    el("option", { value: r.id }, `${r.id} · ${r.kind === "probe" ? "probe" : r.status}${r.costUsd !== null ? ` · ${usd(r.costUsd)}` : ""}`)));
+    el("option", { value: r.id }, `${r.name ? `${r.name} · ` : ""}${r.id} · ${r.kind === "probe" ? "probe" : r.status}${r.costUsd !== null ? ` · ${usd(r.costUsd)}` : ""}`)));
   if (state.runId) picker.value = state.runId;
 }
 
+/** Light or dark: follows the system until the user picks one here; the choice is kept per browser. */
+function setupTheme() {
+  const root = document.documentElement;
+  try {
+    const saved = localStorage.getItem("repod-theme");
+    if (saved === "light" || saved === "dark") root.dataset.theme = saved;
+  } catch {
+    // Storage can be unavailable (private windows, blocked site data); the system setting applies.
+  }
+  document.getElementById("theme").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try {
+      localStorage.setItem("repod-theme", root.dataset.theme);
+    } catch {
+      // Not kept across reloads then; the toggle still works for this page.
+    }
+  });
+}
+
+/**
+ * Keys: Ctrl/Cmd+K focuses the run search (the picker where the list is
+ * hidden), N opens New run when not typing, Esc closes it.
+ */
+function setupKeys() {
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") return closeNewRun();
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      const input = state.searchNode?.querySelector("input");
+      if (input && input.offsetParent) input.focus();
+      else document.getElementById("run-picker").focus();
+      return;
+    }
+    const active = document.activeElement;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(active?.tagName ?? "") || active?.isContentEditable;
+    if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "n" && state.session) {
+      e.preventDefault();
+      openNewRun();
+    }
+  });
+}
+
 async function init() {
+  setupTheme();
+  setupKeys();
   const [source, runs, models, session, experiments] = await Promise.all([
     fetchJson("data/source.json"), fetchJson("data/runs.json"), fetchJson("data/models.json"), fetchJson("data/session.json"), fetchJson("data/experiments.json"),
   ]);
@@ -893,9 +1256,14 @@ async function init() {
   state.models = models ?? {};
   state.experiments = experiments ?? [];
   state.session = session?.enabled ? session : null;
+  // The demo request's text: from the data source, else from the session.
+  state.demoRequest = source?.demoRequest ?? state.session?.request ?? null;
+  state.sourceKind = source?.source === "replay" ? "replay" : source ? "local" : null;
   if (state.session) {
-    // Only an interactive server offers starting a run.
-    document.querySelector(".tabs").append(el("button", { type: "button", class: "tab", "data-view": "new", "aria-pressed": "false" }, "New run"));
+    // Only an interactive server offers starting a run: the top bar's primary
+    // button, which opens the New run panel over the page.
+    document.getElementById("actions").append(el("button", { type: "button", class: "btn primary", id: "new-run", onclick: () => openNewRun() },
+      "New run", el("kbd", {}, "N")));
   }
   state.source = source?.source === "replay" ? "Replay of recorded runs" : source ? `Live view of local runs (${source.runsDir})` : null;
 
