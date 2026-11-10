@@ -45,7 +45,9 @@ const taskId = z.string().nullable();
 const LedgerEventSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("run_started"), preset: z.string(), request: z.string(),
     // Origin of the model API, such as https://api.meta.ai; absent in ledgers written before it was recorded.
-    endpoint: z.string().optional() }),
+    endpoint: z.string().optional(),
+    // A name the user gave the run when starting it; absent when none was given.
+    name: z.string().optional() }),
   z.object({ ...base, type: z.literal("call_start"), role: z.enum(ROLES), model: z.string(), taskId, attemptId, reservedUsd: Money }),
   z.object({
     ...base,

@@ -28,6 +28,8 @@ export interface ReplayOptions {
   outDir: string;
   /** Run or experiment ids to export; an experiment brings its runs. Empty: every finished run and every experiment. */
   include: readonly string[];
+  /** The demo request's text, so the page can label runs of it; see ViewServerOptions. */
+  demoRequest?: string | null;
 }
 
 export interface ReplaySummary {
@@ -99,7 +101,7 @@ export async function exportReplay(o: ReplayOptions): Promise<ReplaySummary> {
 
   await mkdir(data, { recursive: true });
   for (const file of PAGE_FILES) await copyFile(path.join(o.webDir, file), path.join(o.outDir, file));
-  await write("source.json", JSON.stringify({ source: "replay", exportedAt: new Date().toISOString() }));
+  await write("source.json", JSON.stringify({ source: "replay", exportedAt: new Date().toISOString(), demoRequest: o.demoRequest ?? null }));
   await write("session.json", JSON.stringify({ enabled: false }));
   await write("models.json", JSON.stringify(listModels(o.config)));
   await write("runs.json", scrub(JSON.stringify(runs)));

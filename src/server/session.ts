@@ -10,7 +10,8 @@ export interface InteractiveRunner {
   request: string; // the demo request, shown on the page
   presets: string[];
   // request null runs the demo request; a string runs that free-form request instead.
-  start(preset: string, request: string | null, hooks: PipelineHooks, onStarted: (runId: string) => void): Promise<unknown>;
+  // name is the user's label for the run (null: none), recorded with it.
+  start(preset: string, request: string | null, name: string | null, hooks: PipelineHooks, onStarted: (runId: string) => void): Promise<unknown>;
 }
 
 export interface PendingTask {
@@ -77,7 +78,7 @@ export class InteractiveSession {
   }
 
   /** Starts a run and resolves with its id; rejects if one is going or it fails before starting. */
-  start(preset: string, request: string | null = null): Promise<string> {
+  start(preset: string, request: string | null = null, name: string | null = null): Promise<string> {
     if (this.state === "starting" || this.state === "running" || this.state === "waiting") {
       return Promise.reject(new SessionConflictError("A run started from this page is still in progress."));
     }
@@ -111,7 +112,7 @@ export class InteractiveSession {
     return new Promise((resolve, reject) => {
       let started = false;
       this.runner
-        .start(preset, request, hooks, (runId) => {
+        .start(preset, request, name, hooks, (runId) => {
           started = true;
           this.runId = runId;
           this.state = "running";

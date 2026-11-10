@@ -15,12 +15,13 @@ const plan: PlanResponse = {
 };
 
 /** A runner that plays the pipeline's side: ask, then review the plan (twice if sent back). */
-function scriptedRunner(record: { answers?: Record<string, string>; reviews: PlanReview[]; request?: string | null }, failBeforeStart = false): InteractiveRunner {
+function scriptedRunner(record: { answers?: Record<string, string>; reviews: PlanReview[]; request?: string | null; name?: string | null }, failBeforeStart = false): InteractiveRunner {
   return {
     request: "Add planOrder.",
     presets: ["saving", "quality"],
-    async start(_preset, request, hooks: PipelineHooks, onStarted) {
+    async start(_preset, request, name, hooks: PipelineHooks, onStarted) {
       record.request = request;
+      record.name = name;
       if (failBeforeStart) throw new Error("MODEL_API_KEY is not set");
       onStarted("run-1");
       record.answers = await hooks.answerQuestions([question], "One question.");
@@ -65,14 +66,16 @@ test("a run goes from questions to the plan, with defaults for empty answers and
 });
 
 test("the demo request is the default and a free-form request is passed to the runner", async () => {
-  const record: { reviews: PlanReview[]; request?: string | null } = { reviews: [] };
+  const record: { reviews: PlanReview[]; request?: string | null; name?: string | null } = { reviews: [] };
   const demo = new InteractiveSession(scriptedRunner(record));
   await demo.start("saving");
   assert.equal(record.request, null);
+  assert.equal(record.name, null, "no name by default");
 
   const own = new InteractiveSession(scriptedRunner(record));
-  await own.start("saving", "Add a --version flag.");
+  await own.start("saving", "Add a --version flag.", "Version flag");
   assert.equal(record.request, "Add a --version flag.");
+  assert.equal(record.name, "Version flag");
 });
 
 test("stopping at the plan ends the run without a revision", async () => {

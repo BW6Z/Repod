@@ -141,7 +141,7 @@ async function decisions(ledger: LedgerWriter) {
 describe("runPipeline: the main path", () => {
   test("plans, executes, checks the integrated result, freezes and summarizes", async () => {
     const gateway = new ScriptedGateway({ plan_response: [plan(task("T1"))], executor_output: [writes({ "src/math.ts": WITH_MUL })], run_summary: [summary] });
-    const { report, workspace, ledger } = await run(gateway, { endpoint: "https://api.meta.ai" });
+    const { report, workspace, ledger } = await run(gateway, { endpoint: "https://api.meta.ai", name: "First try" });
 
     assert.equal(report.status, "completed", report.problems.join("\n"));
     assert.equal(report.tasks[0]?.status, "passed");
@@ -159,6 +159,8 @@ describe("runPipeline: the main path", () => {
     assert.equal(types[0], "run_started");
     // The model API is recorded, so a rehearsal run is never taken for a real one.
     assert.equal(events[0]?.type === "run_started" && events[0].endpoint, "https://api.meta.ai");
+    // The user's name for the run is recorded with it, for the run list.
+    assert.equal(events[0]?.type === "run_started" && events[0].name, "First try");
     assert.equal(types.at(-1), "run_finished");
     // The approved plan is logged before any task runs, so a viewer can show it live.
     assert.ok(types.indexOf("plan_approved") < types.indexOf("task_status"));

@@ -1,152 +1,111 @@
-/* Muted (Morandi) blue, frosted glass over soft colour fields; no white
-   surfaces, no animation. The glass falls back to solid colour where the
-   browser cannot blur or the user asks for less transparency. */
+/* Workbench layout: icon rail | top bar over run list, main area and inspector.
+   Light mode keeps the original Morandi palette and frosted glass over soft
+   colour fields; dark mode is opaque. Every colour comes from the tokens
+   below, so the two themes differ only there. No animation. */
 :root {
+  --bg: #d5dfe7;
+  --bg-image:
+    radial-gradient(38rem 30rem at 12% 8%, #b9c8d4 0%, transparent 70%),
+    radial-gradient(34rem 28rem at 88% 18%, #a7a3b8 0%, transparent 70%),
+    radial-gradient(40rem 34rem at 70% 92%, #8fa6b6 0%, transparent 70%),
+    radial-gradient(30rem 26rem at 18% 85%, #a9bccb 0%, transparent 70%),
+    linear-gradient(160deg, #7f95a6 0%, #8ea2b2 45%, #7a8fa1 100%);
+  --surface: #eef3f6;
+  --surface-2: #e3eaef;
+  --border: #cdd8e0;
+  --border-strong: #b9c7d2;
   --ink: #24313b;
   --ink-2: #4d5f6c;
   --muted: #627380;
-  --accent: #4b6a82; /* the one strong colour: what waits for the user */
+  --faint: #8a99a5;
+  --accent: #4b6a82;          /* the one strong colour: what waits for the user */
+  --accent-strong: #3a556b;
   --accent-ink: #f1f5f8;
-
-  /* Light glass for chrome, denser glass where there is a lot of text. */
-  --glass: rgba(232, 238, 243, 0.38);
-  --glass-dense: rgba(236, 241, 245, 0.66);
-  --glass-inset: rgba(220, 229, 236, 0.55);
-  --glass-item: rgba(240, 244, 247, 0.55);
-  --glass-edge: rgba(250, 252, 253, 0.55);
-  --glass-blur: blur(22px) saturate(140%);
-  --solid: #dfe7ed;
-  --shadow: 0 10px 34px rgba(36, 49, 59, 0.14);
-  --highlight: inset 0 1px 0 rgba(250, 252, 253, 0.6);
-  --hairline: rgba(36, 49, 59, 0.08);
-
-  --tier-cheap: #c4d6e3;
-  --tier-strong: #cbc3da;
-  --tier-free: #c9dad3;
+  --accent-soft: #dbe5ec;
+  --strong: #574e72;          /* strong tier: lavender */
+  --strong-soft: #cbc3da;
+  --cheap: #4f6f88;           /* cheap tier: light blue */
+  --cheap-soft: #c4d6e3;
+  --free: #4f7564;
+  --free-soft: #c9dad3;
   --ok: #4f7564;
+  --ok-soft: #d8e6df;
   --warn: #8a6d3b;
+  --warn-soft: #efe6d6;
   --bad: #955656;
+  --bad-soft: #efdcdc;
 
-  --r: 16px;
-  --r-sm: 10px;
-  --gap: 16px;
+  /* Glass: chrome and the main area are dense, cards a little lighter. */
+  --panel: rgba(236, 241, 245, 0.66);
+  --card: rgba(240, 244, 247, 0.58);
+  --main-bg: rgba(236, 241, 245, 0.66);
+  --glass-edge: rgba(250, 252, 253, 0.55);
+  --glass-line: rgba(36, 49, 59, 0.10);
+  --highlight: inset 0 1px 0 rgba(250, 252, 253, 0.6);
+  --blur: blur(22px) saturate(140%);
+  --shadow: 0 1px 2px rgba(36, 49, 59, 0.05), 0 1px 3px rgba(36, 49, 59, 0.08);
+  --scroll-thumb: #b3c2ce;
+  --scroll-thumb-hover: #98a9b7;
+
+  --r: 10px;
+  --r-sm: 7px;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--ink);
 }
 
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  min-height: 100vh;
-  /* Soft colour fields give the glass something to blur; flat colour would make it look grey. */
-  background:
-    radial-gradient(38rem 30rem at 12% 8%, #b9c8d4 0%, transparent 70%),
-    radial-gradient(34rem 28rem at 88% 18%, #a7a3b8 0%, transparent 70%),
-    radial-gradient(40rem 34rem at 70% 92%, #8fa6b6 0%, transparent 70%),
-    radial-gradient(30rem 26rem at 18% 85%, #a9bccb 0%, transparent 70%),
-    linear-gradient(160deg, #7f95a6 0%, #8ea2b2 45%, #7a8fa1 100%);
-  background-color: #8a9eae;
-  background-attachment: fixed;
+/* Dark mode follows the system unless the page's toggle chose light; the
+   toggle's dark choice applies whatever the system says. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1419; --bg-image: none;
+    --surface: #161c23; --surface-2: #1b222a; --border: #263039; --border-strong: #303b46;
+    --ink: #e6ebf0; --ink-2: #c3ccd5; --muted: #8b97a4; --faint: #66727f;
+    --accent: #86a5c2; --accent-strong: #a9c2da; --accent-ink: #0f1419; --accent-soft: #1f2b37;
+    --strong: #a9c2da; --strong-soft: #1f2b37; --cheap: #94b3a0; --cheap-soft: #1d2a23; --free: #94b3a0; --free-soft: #1d2a23;
+    --ok: #6cbf95; --ok-soft: #17291f; --warn: #d7a65a; --warn-soft: #2c2416; --bad: #e08a74; --bad-soft: #2e1d19;
+    --panel: #161c23; --card: #161c23; --main-bg: transparent; --glass-edge: #263039; --glass-line: #263039;
+    --highlight: 0 0 #0000; --blur: none; --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --scroll-thumb: #34404c; --scroll-thumb-hover: #46535f;
+    color-scheme: dark;
+  }
 }
-h2 {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-  margin: 0 0 12px;
+:root[data-theme="dark"] {
+  --bg: #0f1419; --bg-image: none;
+  --surface: #161c23; --surface-2: #1b222a; --border: #263039; --border-strong: #303b46;
+  --ink: #e6ebf0; --ink-2: #c3ccd5; --muted: #8b97a4; --faint: #66727f;
+  --accent: #86a5c2; --accent-strong: #a9c2da; --accent-ink: #0f1419; --accent-soft: #1f2b37;
+  --strong: #a9c2da; --strong-soft: #1f2b37; --cheap: #94b3a0; --cheap-soft: #1d2a23; --free: #94b3a0; --free-soft: #1d2a23;
+  --ok: #6cbf95; --ok-soft: #17291f; --warn: #d7a65a; --warn-soft: #2c2416; --bad: #e08a74; --bad-soft: #2e1d19;
+  --panel: #161c23; --card: #161c23; --main-bg: transparent; --glass-edge: #263039; --glass-line: #263039;
+  --highlight: 0 0 #0000; --blur: none; --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --scroll-thumb: #34404c; --scroll-thumb-hover: #46535f;
+  color-scheme: dark;
 }
-h3 { font-size: 14px; margin: 0; }
-p { margin: 0 0 8px; }
-code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-
-/* ---- glass ------------------------------------------------------------------- */
-
-.glass {
-  background: var(--glass);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-edge);
-  box-shadow: var(--shadow), var(--highlight);
-  border-radius: var(--r);
-}
-.glass.dense { background: var(--glass-dense); }
+/* Where the browser cannot blur, or the user asks for less transparency, the glass turns solid. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass, .glass.dense, .action { background: var(--solid); }
+  :root { --panel: var(--surface); --card: var(--surface); --main-bg: var(--bg); }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .glass, .glass.dense, .action { background: var(--solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  :root { --panel: var(--surface); --card: var(--surface); --main-bg: var(--bg); --blur: none; }
 }
 
-/* ---- header -------------------------------------------------------------------- */
+* { box-sizing: border-box; }
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); border: 2px solid transparent; background-clip: padding-box; }
 
-.bar {
-  position: sticky;
-  top: 12px;
-  z-index: 5;
-  margin: 12px 16px 0;
-  padding: 10px 16px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 20px;
-}
-.brand { font-weight: 700; font-size: 16px; }
-.brand-sub { font-weight: 500; color: var(--muted); margin-left: 6px; }
-.tabs { display: flex; gap: 4px; }
-.tab {
-  font: inherit;
-  padding: 6px 12px;
-  border: 0;
-  border-radius: 999px;
-  background: none;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-.tab[aria-pressed="true"] { background: var(--glass-dense); color: var(--ink); box-shadow: var(--highlight); }
-/* The picker is for narrow screens, where the run list is hidden. */
-.picker { flex: 1 1 14rem; min-width: 0; max-width: 26rem; display: none; }
-.picker select {
-  font: inherit;
-  width: 100%;
-  padding: 5px 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  background: var(--glass-dense);
-  color: var(--ink);
-}
-.live { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
-.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.dot.running { background: var(--ok); }
-.dot.turn { background: var(--accent); }
-.dot.ok { background: var(--ok); }
-.dot.bad { background: var(--bad); }
-.dot.warn { background: var(--warn); }
-
-/* ---- layout: run list | conversation | dashboard -------------------------------- */
-
-.app {
-  display: grid;
-  gap: var(--gap);
-  padding: var(--gap);
-  max-width: 1360px;
-  margin: 0 auto;
-  align-items: start;
-  grid-template-columns: 220px minmax(0, 1fr) 300px;
-}
-.app.single { grid-template-columns: minmax(0, 1fr); max-width: 1040px; }
-.column { display: grid; gap: var(--gap); align-content: start; min-width: 0; }
-.history { padding: 16px; position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow: auto; }
-.side { position: sticky; top: 84px; }
-
-/* Run ids and commit hashes are long unbroken words; let them wrap anywhere. */
-.card { padding: 16px; min-width: 0; overflow-wrap: anywhere; }
-.main { padding: 20px 24px 0; min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; min-height: 60vh; }
-.main > :last-child:not(.action) { margin-bottom: 20px; }
-.app.single .main { min-height: 0; }
+h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+h2 { font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+h3 { font-size: 14px; margin: 0; }
+p { margin: 0 0 8px; }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .muted { color: var(--muted); }
 .empty { color: var(--muted); font-style: italic; }
 .note { font-size: 12px; color: var(--muted); }
@@ -155,288 +114,600 @@ code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; f
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .num { font-variant-numeric: tabular-nums; }
 .error { color: var(--bad); margin: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 
-/* ---- run list ---------------------------------------------------------------------- */
+/* ---- shell: rail | top bar over the app ------------------------------------------- */
 
-.runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.runs button {
-  font: inherit;
-  width: 100%;
-  text-align: left;
-  padding: 8px 10px;
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg-image);
+  background-color: var(--bg);
+  background-attachment: fixed;
+}
+/* Glass surfaces share one rule; their tint comes from the tokens. */
+.rail, .bar, .history, .side, .main { -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
+
+.rail {
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 0;
+  border-right: 1px solid var(--glass-line);
+  background: var(--panel);
+}
+.logo { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 700; margin-bottom: 10px; }
+.rail .tabs { display: flex; flex-direction: column; gap: 6px; }
+.rail .tab, .theme {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: 8px;
   background: none;
-  color: var(--ink);
+  color: var(--muted);
   cursor: pointer;
 }
-.runs button[aria-current="true"] { background: var(--glass-dense); box-shadow: var(--highlight); }
-.runs .t { display: flex; align-items: center; gap: 8px; font-weight: 500; }
-.runs .s { display: block; font-size: 12px; color: var(--muted); margin-left: 16px; }
-.history .note { margin: 12px 0 0; }
+.rail .tab:hover, .theme:hover { background: var(--surface-2); color: var(--ink); }
+.rail .tab[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+.rail svg { width: 18px; height: 18px; }
+.rail .spacer { flex: 1; }
 
-/* ---- one run: head, tabs, one panel at a time ------------------------------------------ */
-
-.run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
-.run-name { font-size: 18px; font-weight: 650; margin: 0; }
-.run-tabs {
+.bar {
   display: flex;
-  gap: 2px;
-  margin: 0 -24px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--hairline);
-  overflow-x: auto;
-  overflow-y: hidden;
+  align-items: center;
+  gap: 10px 16px;
+  min-width: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--glass-line);
+  background: var(--panel);
 }
+.brand { font-weight: 700; font-size: 15px; white-space: nowrap; }
+.brand-sub { font-weight: 500; color: var(--muted); margin-left: 6px; }
+/* The picker is for narrower screens, where the run list is hidden. */
+.picker { flex: 1 1 14rem; min-width: 0; max-width: 26rem; display: none; }
+.picker select { font: inherit; width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); }
+/* Scoped to the bar: run status pills also carry the class "live". */
+.bar > .live { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink-2); font-size: 13px; }
+.actions { display: flex; gap: 8px; }
+.actions:empty { display: none; }
+
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.running, .dot.ok { background: var(--ok); }
+.dot.turn { background: var(--accent); }
+.dot.bad { background: var(--bad); }
+.dot.warn { background: var(--warn); }
+
+/* ---- app: run list | main | inspector, each scrolling on its own -------------------- */
+
+.app { display: grid; grid-template-columns: 272px minmax(0, 1fr) 320px; min-height: 0; min-width: 0; }
+.app > * { min-height: 0; overflow-y: auto; }
+.column { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.app.single { grid-template-columns: minmax(0, 1fr); overflow-y: auto; padding: 24px 28px 40px; background: var(--main-bg); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
+.app.single > * { overflow: visible; width: 100%; max-width: 1040px; margin: 0 auto; }
+
+.history { padding: 14px 10px 16px; border-right: 1px solid var(--glass-line); background: var(--panel); }
+.history > h2 { padding: 0 8px; }
+.history .note { margin: 12px 8px 0; }
+
+.main { display: flex; flex-direction: column; min-width: 0; padding: 22px 28px 0; background: var(--main-bg); overflow-wrap: anywhere; }
+.main > :last-child:not(.action) { margin-bottom: 28px; }
+/* The main area has a fixed height and scrolls; without this, a long panel
+   would squeeze the tab bar (it clips its overflow) down to nothing. */
+.main > * { flex-shrink: 0; }
+.app.single .main { padding: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+.side { display: grid; align-content: start; padding: 18px; border-left: 1px solid var(--glass-line); background: var(--panel); }
+/* In the inspector, cards are sections divided by a line. */
+.side .card { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.side .card + .card { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+
+/* Cards: run ids and commit hashes are long unbroken words; let them wrap anywhere. */
+.card, .block, .stat, .task, .file {
+  background: var(--card);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r);
+  box-shadow: var(--shadow), var(--highlight);
+}
+.card { padding: 16px; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---- run list --------------------------------------------------------------------- */
+
+.runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.runs button { font: inherit; width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; text-align: left; padding: 8px; border: 0; border-radius: var(--r-sm); background: none; color: var(--ink); cursor: pointer; }
+.runs button:hover { background: var(--surface-2); }
+.runs button[aria-current="true"] { background: var(--accent-soft); }
+/* The first line's parts sit in the button's grid directly. */
+.runs .t { display: contents; }
+.runs .s { grid-column: 2 / 4; font-size: 12px; color: var(--muted); }
+
+/* ---- one run: head, tabs, one panel at a time ------------------------------------- */
+
+.run-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 4px; }
+.run-name { font-size: 20px; }
+.run-head > .note { flex-basis: 100%; margin: 0; }
+.run-head > .note + .note { margin-top: -4px; }
+.run-tabs { display: flex; gap: 2px; margin: 16px 0 0; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; }
 .run-tab {
   font: inherit;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   padding: 9px 12px 10px;
   margin-bottom: -1px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
-  color: var(--ink-2);
+  color: var(--muted);
+  font-weight: 550;
   cursor: pointer;
   white-space: nowrap;
 }
-.run-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
-.run-tab .count { font-size: 12px; font-weight: 500; color: var(--muted); }
+.run-tab:hover { color: var(--ink); }
+.run-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.run-tab .count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 11px; color: var(--muted); display: inline-grid; place-items: center; }
 .panel { display: grid; gap: 16px; align-content: start; padding-top: 18px; flex: 1; min-width: 0; }
 
+/* Status: a pill where it labels a run or a task, coloured text elsewhere. */
+.status { font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--ink-2); }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--bad); }
+.status.warn { color: var(--warn); }
+.status.live { color: var(--accent); }
+.run-head > .status, .task .state > .status, .route-row .meta > .status, .findings .status {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; background: var(--surface-2);
+}
+.run-head > .status.ok, .task .state > .status.ok, .route-row .meta > .status.ok { background: var(--ok-soft); }
+.run-head > .status.bad, .task .state > .status.bad, .route-row .meta > .status.bad, .findings .status.bad { background: var(--bad-soft); }
+.run-head > .status.warn, .task .state > .status.warn, .findings .status.warn { background: var(--warn-soft); }
+.run-head > .status.live, .task .state > .status.live, .route-row .meta > .status.live { background: var(--accent-soft); }
+
 /* Overview: acceptance tiles, then one line per task. */
-.acceptance { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.stat { padding: 10px 12px; border-radius: var(--r-sm); background: var(--glass-item); box-shadow: var(--highlight); }
+.acceptance { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat { padding: 12px 14px; }
 .stat .note { margin: 0; }
-.stat-value { display: block; font-size: 15px; font-weight: 600; white-space: normal; }
-.route-list { display: grid; gap: 2px; }
+.stat-value { display: block; margin-top: 4px; font-size: 16px; font-weight: 650; white-space: normal; }
+.block { padding: 14px 16px; }
+.block > p { margin-bottom: 10px; }
+.route-list { display: grid; margin: 0 -16px; border-top: 1px solid var(--border); }
 .route-row {
   font: inherit;
   display: grid;
   grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) auto auto;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   width: 100%;
-  padding: 8px 10px;
+  padding: 11px 16px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-bottom: 1px solid var(--border);
   background: none;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
-.route-row:hover { background: var(--glass-item); }
+.route-row:hover { background: var(--surface-2); }
 .route-row .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.route-list + .note { margin: 6px 0 0; }
-.outcome .bubble { background: var(--glass-item); }
+.route-list + .note { margin: 10px 0 0; }
+.outcome .bubble { background: var(--card); border: 1px solid var(--glass-edge); }
 
-/* ---- conversation ---------------------------------------------------------------------- */
+/* ---- conversation ------------------------------------------------------------------ */
 
-.thread { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+.thread { display: flex; flex-direction: column; gap: 14px; flex: 1; max-width: 820px; }
 .msg { max-width: 82%; align-self: flex-start; min-width: 0; }
 .msg.user { align-self: flex-end; }
-.msg-from { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.msg-from { font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.msg-from .aside { margin-left: 8px; font-weight: 400; color: var(--muted); }
 .msg.user .msg-from { text-align: right; }
-.bubble { padding: 12px 14px; border-radius: 14px; background: var(--glass-inset); box-shadow: var(--highlight); }
-.msg.user .bubble { background: rgba(75, 106, 130, 0.88); color: var(--accent-ink); }
+.bubble { padding: 12px 14px; border-radius: 12px; background: var(--surface-2); color: var(--ink-2); }
+.msg.user .bubble { background: var(--accent); color: var(--accent-ink); }
 .bubble > :last-child { margin-bottom: 0; }
 .questions { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
-.questions li { padding: 10px 12px; border-radius: var(--r-sm); background: var(--glass-item); }
-.decision { align-self: center; font-size: 12px; color: var(--muted); text-align: center; }
+.questions li { padding: 10px 12px; border-radius: var(--r-sm); background: var(--card); border: 1px solid var(--border); }
+.decision { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.decision::before, .decision::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 
-.block { padding: 14px; border-radius: 14px; background: var(--glass-inset); box-shadow: var(--highlight); }
-.block > p { margin-bottom: 10px; }
 /* Meta names tasks like "planner-core": the id column grows to fit instead of wrapping letter by letter. */
-.id { font-weight: 600; color: var(--muted); white-space: nowrap; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
-.title { font-weight: 500; }
+.id { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; }
+.title { font-weight: 550; }
 .cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 
 /* A plan as Meta proposed it. */
-.plan-list { display: grid; gap: 10px; }
-.plan-row { display: grid; grid-template-columns: minmax(30px, max-content) minmax(0, 1fr); gap: 10px; }
-.plan-body { display: grid; gap: 2px; min-width: 0; }
+.plan-card { margin-top: 12px; border: 1px solid var(--glass-edge); border-radius: var(--r); background: var(--card); box-shadow: var(--shadow), var(--highlight); overflow: hidden; }
+.plan-row { display: grid; grid-template-columns: minmax(70px, max-content) minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 14px 18px; }
+.plan-row + .plan-row { border-top: 1px solid var(--border); }
+/* Rows share the card's tracks, so titles line up whatever the id length. */
+@supports (grid-template-columns: subgrid) {
+  .plan-card { display: grid; grid-template-columns: minmax(70px, max-content) minmax(0, 1fr) auto; }
+  .plan-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
+.plan-row .badge { justify-self: end; }
+/* Plan ids are short slugs; show them whole rather than the 20ch cut used in tables. */
+.plan-row .id { max-width: 26ch; }
+.plan-body { display: grid; gap: 3px; min-width: 0; }
+.plan-body .title { font-weight: 600; color: var(--ink); }
 .plan-body .note { margin: 0; }
 
 /* Tasks: one line each, opened on demand. */
-.tasks { display: grid; gap: 8px; }
-.task { border-radius: var(--r-sm); background: var(--glass-item); }
+.tasks { display: grid; gap: 12px; }
 .task > summary {
   list-style: none;
   display: grid;
   grid-template-columns: minmax(30px, max-content) minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 14px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 12px 16px;
   color: var(--ink);
   font-size: 14px;
+  cursor: pointer;
 }
 .task > summary::-webkit-details-marker { display: none; }
-.task[open] > summary { margin-bottom: 0; border-bottom: 1px solid var(--hairline); }
-.task .state { display: grid; justify-items: end; font-size: 12px; white-space: nowrap; }
-.task-body { display: grid; gap: 4px; padding: 10px 12px 12px 52px; }
+.task[open] > summary { border-bottom: 1px solid var(--border); }
+.task .state { display: grid; justify-items: end; gap: 2px; font-size: 12px; white-space: nowrap; }
+.task-body { display: grid; gap: 4px; padding: 12px 16px 16px; }
 .task-body .note { margin: 0; }
 
+/* Model chips: strong tier lavender, cheap light blue. */
 .badge {
-  display: inline-block;
-  padding: 1px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--glass-item);
-  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--surface-2);
+  color: var(--ink-2);
   white-space: nowrap;
 }
-.badge.tier-cheap { background: var(--tier-cheap); }
-.badge.tier-strong { background: var(--tier-strong); }
-.badge.tier-free { background: var(--tier-free); }
-.route { display: inline-flex; align-items: center; gap: 4px; }
+.badge.tier-strong { background: var(--strong-soft); color: var(--strong); }
+.badge.tier-cheap { background: var(--cheap-soft); color: var(--cheap); }
+.badge.tier-free { background: var(--free-soft); color: var(--free); }
+.route { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .route .arrow { color: var(--muted); }
-.status { font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--ink-2); }
-.status.ok { color: var(--ok); }
-.status.bad { color: var(--bad); }
-.status.warn { color: var(--warn); }
-.status.live { color: var(--accent); }
 
-/* A task's attempts and the decisions between them, on a thin rail. */
-.timeline { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--hairline); display: grid; gap: 8px; font-size: 12px; }
-.timeline li { display: grid; gap: 2px; justify-items: start; }
-.timeline .head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.timeline .step { font-weight: 600; color: var(--ink-2); }
-.timeline .who { font-weight: 600; color: var(--accent); }
-.timeline .decided.program .who { color: var(--ink-2); }
-.timeline .status { white-space: normal; }
+/* A task's attempts and the decisions between them: dots on a thin rail. */
+/* A task's attempts and decisions: a round node per step on one line, the step beside it. */
+.timeline { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 16px; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 12px; top: 14px; bottom: 14px; width: 1px; background: var(--border-strong); }
+.timeline > .step { position: relative; display: grid; grid-template-columns: 25px minmax(0, 1fr); gap: 14px; align-items: start; }
+.node { position: relative; z-index: 1; width: 25px; height: 25px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); }
+.node svg { width: 12px; height: 12px; }
+.step.ok .node { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.step.bad .node { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+.step.live .node { border-color: var(--accent); color: var(--accent); }
+.step.decided .node { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.step.decided.program .node { border-color: var(--muted); background: var(--muted); }
+.step-body { display: grid; gap: 8px; justify-items: start; min-width: 0; padding-top: 2px; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-weight: 600; color: var(--ink); }
+.step-head .aside { font-weight: 400; font-size: 12.5px; color: var(--muted); }
+.step-body > .note { margin: 0; }
+/* Meta's reason for a decision, set apart like a quote. */
+.reason-box { justify-self: stretch; padding: 10px 14px; border-left: 2px solid var(--accent); border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--accent-soft); color: var(--ink-2); font-size: 13px; }
+.reason-box b { font-weight: 600; color: var(--ink); }
 
 /* What the run delivered: each changed file, its diff opened on demand. */
-.files { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
-.file { padding: 8px 12px; border-radius: var(--r-sm); background: var(--glass-item); }
-.file[open] > summary { margin-bottom: 8px; }
-.files .file > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.files { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+.file { padding: 10px 14px; }
+.file[open] > summary { margin-bottom: 10px; }
+.files .file > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .diff {
   margin: 0;
   padding: 8px 0;
   max-height: 420px;
   overflow: auto;
   border-radius: var(--r-sm);
-  background: var(--glass-item);
-  font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font: 12px/1.6 var(--mono);
   white-space: pre;
 }
 .diff span { display: block; padding: 0 12px; min-width: max-content; }
-.diff .add { background: rgba(79, 117, 100, 0.14); color: var(--ok); }
-.diff .del { background: rgba(149, 86, 86, 0.12); color: var(--bad); }
+.diff .add { background: var(--ok-soft); color: var(--ok); }
+.diff .del { background: var(--bad-soft); color: var(--bad); }
 .diff .hunk { color: var(--accent); }
 .diff .meta { color: var(--muted); }
 
 .problems { margin: 8px 0 0; padding-left: 18px; }
-.findings { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
+.findings { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; font-size: 12.5px; }
 
 /* What Meta waits for: the only strongly coloured element on the page. */
 .action {
   position: sticky;
   bottom: 0;
-  margin: 20px -24px 0;
-  padding: 14px 24px 18px;
+  margin: 20px -28px 0;
+  padding: 14px 28px 18px;
   display: grid;
   gap: 10px;
-  border-top: 1px solid var(--glass-edge);
-  border-radius: 0 0 var(--r) var(--r);
-  background: rgba(226, 234, 240, 0.78);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  border-top: 2px solid var(--accent);
+  background: var(--panel);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
 }
 .action-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.field { display: grid; gap: 4px; }
-.start-form { display: grid; gap: 12px; }
+
+/* ---- forms and buttons ------------------------------------------------------------- */
+
+.field { display: grid; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.start-form { display: grid; gap: 16px; }
 .start-form .msg { max-width: 100%; }
 .start-part { display: grid; gap: 8px; }
 .start-part[hidden] { display: none; }
-.choices { display: flex; flex-wrap: wrap; gap: 6px 18px; }
-.choice { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.choice input { accent-color: var(--accent); }
-.input {
-  font: inherit;
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid rgba(36, 49, 59, 0.14);
-  border-radius: var(--r-sm);
-  background: rgba(244, 247, 249, 0.8);
-  color: var(--ink);
-}
+.choices { display: flex; flex-wrap: wrap; gap: 10px; }
+.choice { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--r); background: var(--card); cursor: pointer; font-weight: 550; }
+.choice:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.choice input { margin: 0; accent-color: var(--accent); }
+.input { font: inherit; width: 100%; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); }
 textarea.input { resize: vertical; }
 .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .btn {
   font: inherit;
-  font-weight: 500;
-  padding: 8px 16px;
-  border: 1px solid rgba(36, 49, 59, 0.16);
-  border-radius: 999px;
-  background: rgba(240, 244, 247, 0.7);
+  font-weight: 550;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
   color: var(--ink);
   cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
 }
+.btn:hover { background: var(--surface-2); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.btn.quiet { margin-left: auto; border-color: transparent; background: none; color: var(--muted); }
-.btn:disabled { opacity: 0.6; cursor: default; }
-.input:focus, .btn:focus-visible, .tab:focus-visible, .run-tab:focus-visible, .route-row:focus-visible, .task > summary:focus-visible, .runs button:focus-visible, .link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
+.btn.primary:hover { background: var(--accent-strong); }
+/* The top bar's New run stays a primary button while its view is open. */
+.btn.primary[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--accent-soft); }
+.btn.quiet { margin-left: auto; border-color: transparent; background: none; box-shadow: none; color: var(--muted); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn svg { width: 15px; height: 15px; }
 .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-align: left; }
 
-/* ---- dashboard ------------------------------------------------------------------------- */
+/* ---- inspector -------------------------------------------------------------------- */
 
-.metric { font-size: 30px; font-weight: 650; line-height: 1.1; }
-.track { height: 6px; border-radius: 6px; background: rgba(36, 49, 59, 0.08); overflow: hidden; }
-.track.thick { height: 10px; }
-.fill { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
-.fill.tier-strong { background: #9e95b3; }
-.kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; margin: 0; }
-.kv dt { color: var(--ink-2); }
+.metric { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; }
+.track { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.track.thick { height: 8px; }
+.fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.fill.tier-strong { background: var(--faint); }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 13px; margin: 12px 0 0; }
+.kv dt { color: var(--ink-2); text-transform: capitalize; }
 .kv dd { margin: 0; text-align: right; }
-.compare { display: grid; gap: 10px; }
-.compare .label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-2); margin-bottom: 3px; }
+.compare { display: grid; gap: 12px; margin-bottom: 10px; }
+.compare .label { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--ink-2); margin-bottom: 5px; }
+.compare .note { margin-top: 3px; }
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
 .list li { display: flex; justify-content: space-between; gap: 10px; }
 .list li > :first-child { min-width: 0; overflow-wrap: anywhere; }
-details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 550; }
 details[open] > summary { margin-bottom: 10px; }
 
-/* ---- experiments ------------------------------------------------------------------------ */
+/* ---- experiments ------------------------------------------------------------------ */
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
-th { color: var(--muted); font-weight: 500; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; background: var(--surface-2); }
 td.num, th.num { text-align: right; }
 /* Cells break between words only; the table scrolls when it is still too wide. */
 th, td { overflow-wrap: normal; }
 th { white-space: nowrap; }
 td:first-child { min-width: 10rem; }
-.table-wrap { overflow-x: auto; margin-bottom: 12px; }
+.table-wrap { overflow-x: auto; margin: 4px 0 12px; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.table-wrap tr:last-child td { border-bottom: 0; }
 
-/* ---- narrow screens ----------------------------------------------------------------------- */
+/* ---- workbench details ------------------------------------------------------------ */
 
-@media (max-width: 1100px) {
-  .app { grid-template-columns: minmax(0, 1fr) 280px; }
+/* Top bar: the path; the brand moves to the run list's header where there is one. */
+.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 13px; }
+.crumbs .sep { color: var(--faint); }
+.crumbs .here { color: var(--ink); font-family: var(--mono); font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .brand { display: none; }
+kbd { font-family: var(--mono); font-size: 11px; padding: 0 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); background: var(--surface); }
+.btn.primary kbd { background: transparent; color: var(--accent-ink); border-color: rgba(241, 245, 248, 0.45); }
+
+/* Run list: header, search, groups. */
+.workspace { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 10px; }
+.workspace b { font-size: 14px; }
+.workspace small { display: block; color: var(--muted); font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--surface-2); color: var(--ink-2); }
+.pill.kind { background: var(--accent-soft); color: var(--accent-strong); }
+.pill.kind.own { background: var(--warn-soft); color: var(--warn); }
+.search { display: flex; align-items: center; gap: 8px; margin: 0 8px 4px; padding: 0 10px; height: 34px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2); color: var(--faint); cursor: text; }
+.search svg { flex: none; width: 14px; height: 14px; }
+.search-input::placeholder { color: var(--faint); }
+.search-input { flex: 1; min-width: 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 13px; outline: none; }
+.search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.group-label { display: flex; justify-content: space-between; padding: 12px 8px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); }
+.runs .t .name { min-width: 0; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.runs .t .c { font-size: 12px; font-weight: 500; color: var(--muted); }
+
+/* Run head: meta row and model chips. */
+.meta-row { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--muted); }
+.meta-row span + span::before { content: "·"; margin-right: 14px; color: var(--faint); }
+.chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.chip .role { color: var(--muted); }
+.chip .swatch { width: 7px; height: 7px; border-radius: 2px; background: var(--faint); }
+.chip.tier-strong .swatch { background: var(--strong); }
+.chip.tier-cheap .swatch { background: var(--cheap); }
+.chip.tier-free .swatch { background: var(--free); }
+
+/* Overview tiles: a big figure, the full wording under it. */
+.stat-figure { margin-top: 2px; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); }
+.stat .stat-value { margin-top: 0; font-size: 12px; font-weight: 500; }
+
+/* A block's title row: heading left, hint right. */
+.block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 10px; }
+.block-head h2 { margin: 0; }
+.outcome > .request { color: var(--ink-2); }
+
+/* The routing list as a table: task, model, labels, result, cost. */
+/* The task keeps at least 12rem; the model column grows to its widest chip
+   when there is room and otherwise lets an escalation's two chips wrap;
+   labels, result and cost fit their text.
+   With subgrid every row shares the list's tracks, so the columns line up. */
+.route-row { grid-template-columns: minmax(12rem, 1fr) minmax(min-content, max-content) max-content max-content max-content; column-gap: 20px; padding: 12px 20px; }
+@supports (grid-template-columns: subgrid) {
+  .route-list { grid-template-columns: minmax(12rem, 1fr) minmax(min-content, max-content) max-content max-content max-content; }
+  .route-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+}
+.route-head { cursor: default; padding-top: 8px; padding-bottom: 8px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); background: var(--surface-2); }
+.route-head:hover { background: var(--surface-2); }
+.route-row .cost { text-align: right; font-size: 13.5px; color: var(--ink); }
+.route-head .cost { font-size: inherit; color: inherit; }
+.route-row:last-child { border-bottom: 0; }
+.task-cell { display: grid; gap: 3px; }
+.task-cell .title { font-weight: 600; color: var(--ink); }
+.task-cell .why { font-size: 12.5px; color: var(--muted); }
+
+/* Overview cards: a title bar over the content, as in the table and summary. */
+.card-block { padding: 0; overflow: hidden; }
+.card-block > .block-head { align-items: center; margin: 0; padding: 12px 20px; border-bottom: 1px solid var(--border); }
+.card-block > .block-head h2 { font-size: 14px; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.card-block > .block-head .note { margin: 0; font-size: 12.5px; }
+.card-block .route-list { margin: 0; border-top: 0; }
+.card-block .route-list + .note { margin: 0; padding: 10px 20px; border-top: 1px solid var(--border); }
+.card-body { padding: 14px 20px 16px; }
+.card-body > .request { margin: 0; color: var(--ink-2); }
+.findings .mono { font-weight: 600; color: var(--ink); }
+.route-row .labels { white-space: nowrap; }
+
+/* Review findings: a severity tag, then where and why. */
+.findings li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2); }
+.sev { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 5px; text-transform: uppercase; letter-spacing: 0.03em; background: var(--warn-soft); color: var(--warn); white-space: nowrap; }
+.sev.blocking { background: var(--bad-soft); color: var(--bad); }
+
+/* Conversation: avatar, who, then the message. */
+.msg { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; max-width: 100%; align-self: stretch; }
+.msg.user { align-self: stretch; }
+.msg.user .msg-from { text-align: left; }
+.avatar { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.msg.user .avatar { background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); }
+.msg.meta .avatar { background: var(--accent); color: var(--accent-ink); }
+.msg-body { min-width: 0; }
+.thread .bubble, .thread .msg.user .bubble { padding: 0; border-radius: 0; background: none; color: var(--ink-2); }
+
+/* Task facts in one row; check results as chips. */
+.facts { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--muted); }
+.facts b { color: var(--ink-2); font-weight: 550; }
+.facts b.mono { font-size: 11.5px; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.ck { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 5px; font-size: 11.5px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); }
+.ck svg { flex: none; width: 12px; height: 12px; }
+.ck.ok svg { color: var(--ok); }
+.ck.bad { background: var(--bad-soft); border-color: transparent; color: var(--bad); }
+
+/* Changed files: path, a tag, the line counts on the right. */
+.files .file > summary { align-items: center; }
+.file .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.tag.new { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.delta { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.delta .add { color: var(--ok); }
+.delta .del { color: var(--bad); margin-left: 6px; }
+
+/* Cost by phase: one split bar and a coloured legend. */
+.stack { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--surface-2); margin: 12px 0 4px; }
+.stack .ph { display: block; height: 100%; }
+.legend dt { display: flex; align-items: center; gap: 8px; }
+.legend .ph { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.ph-coordination { background: var(--accent-strong); }
+.ph-execution { background: var(--accent); }
+.ph-rework { background: var(--warn); }
+.ph-review { background: var(--strong); }
+/* Labels fit their words; a long value (the model API, the run id) is cut, its full text on hover. */
+.kv.details { grid-template-columns: max-content minmax(0, 1fr); }
+.kv.details dd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.kv.details dt { text-transform: none; }
+
+/* New run: a panel from the right, over a dimmed page. */
+.scrim { position: fixed; inset: 0; z-index: 50; background: rgba(15, 20, 25, 0.32); }
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; z-index: 60; width: min(540px, 100vw); display: flex; flex-direction: column; background: var(--panel); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border-left: 1px solid var(--glass-line); box-shadow: 0 12px 32px rgba(36, 49, 59, 0.18); }
+.scrim[hidden], .sheet[hidden] { display: none; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.sheet-head h2 { margin: 0; font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.sheet-body { flex: 1; overflow-y: auto; padding: 20px; }
+.sheet-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); }
+.choices { display: grid; gap: 10px; }
+.card-choice { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; padding: 12px 14px; font-weight: 400; }
+.card-choice input { margin-top: 3px; }
+.card-choice b { display: block; font-weight: 600; color: var(--ink); }
+.card-choice .note { display: block; margin-top: 2px; }
+.request-box { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2); color: var(--ink-2); font-size: 13px; white-space: pre-wrap; }
+.seg { display: inline-flex; width: max-content; padding: 3px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--border); }
+.seg button { font: inherit; border: 0; padding: 5px 14px; border-radius: 5px; background: none; color: var(--muted); font-weight: 550; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.seg-help { margin: 4px 0 0; }
+
+/* ---- narrower screens ------------------------------------------------------------- */
+
+@media (max-width: 1240px) {
+  .app { grid-template-columns: minmax(0, 1fr) 300px; }
   .app .history { display: none; }
   .picker { display: block; }
+  .bar .brand { display: block; } /* the run list and its header are hidden here */
 }
+/* Wide screens with the run list: the list runs the full height beside the
+   rail, and the top bar sits over the main area and the inspector only. The
+   app box steps aside (display: contents) so its three columns join the
+   page grid; narrower layouts keep the box and the full-width top bar. */
+@media (min-width: 1241px) {
+  body:has(> .app > .history) { grid-template-columns: 56px 272px minmax(0, 1fr) 320px; }
+  body:has(> .app > .history) > .bar { grid-column: 3 / 5; grid-row: 1; }
+  .app:has(> .history) { display: contents; }
+  .app > .history { grid-column: 2; grid-row: 1 / 3; }
+  .app > .main { grid-column: 3; grid-row: 2; }
+  .app > .side { grid-column: 4; grid-row: 2; }
+}
+/* An experiment card: its name on the left, its status at the right end of the same line. */
+.exp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 8px; }
+.exp-head h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.exp-head .status { flex: none; }
+/* Below this the main area and the inspector stack and scroll together. */
+@media (max-width: 960px) {
+  /* Plain block flow: each part takes its full height, one under the other. */
+  .app { display: block; overflow-y: auto; }
+  .app > * { min-height: auto; overflow: visible; }
+  .side { border-left: 0; border-top: 1px solid var(--glass-line); }
+}
+/* On a phone the rail becomes a row above the top bar. */
 @media (max-width: 760px) {
-  .bar { position: static; margin: 8px 8px 0; gap: 8px 12px; } /* too tall to keep on a phone screen */
-  .live { margin-left: 0; }
-  .app, .app.single { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 24px; }
-  .side { position: static; }
-  .main { padding: 16px 16px 0; }
-  .main > :last-child:not(.action) { margin-bottom: 16px; }
+  body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  .rail { grid-row: auto; flex-direction: row; padding: 8px 16px; border-right: 0; border-bottom: 1px solid var(--glass-line); }
+  .rail .tabs { flex-direction: row; }
+  .logo { margin: 0 6px 0 0; }
+  .bar { flex-wrap: wrap; padding: 10px 16px; gap: 8px 12px; }
+  .bar > .live { margin-left: 0; }
+  .app.single { padding: 18px 16px 32px; }
+  .main { padding: 18px 16px 0; }
+  .main > :last-child:not(.action) { margin-bottom: 18px; }
+  .side { padding: 18px 16px 28px; }
   .action { margin: 16px -16px 0; padding: 12px 16px 16px; }
   .msg { max-width: 92%; }
-  .run-tabs { margin: 0 -16px; padding: 0 8px; }
-  .run-tab { padding: 8px 8px 9px; }
+  .run-tab { padding: 9px 8px 10px; }
+  .run-tab .count { display: none; }
   .acceptance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .route-row { grid-template-columns: minmax(26px, max-content) minmax(0, 1fr) auto; }
-  .route-row .cost { display: none; }
+  .route-row, .route-list { grid-template-columns: minmax(0, 1fr) auto; }
+  .route-row { padding: 12px 14px; column-gap: 12px; }
+  .card-block > .block-head { padding: 12px 14px; }
+  .card-body { padding: 12px 14px 14px; }
+  .route-row > :nth-child(2), .route-row .labels, .route-row .cost { display: none; }
+  .crumbs { display: none; }
+  .sheet-body { padding: 16px; }
   .task > summary { grid-template-columns: minmax(26px, max-content) minmax(0, 1fr); }
   .task .state { grid-column: 2; justify-items: start; }
-  .task-body { padding-left: 12px; }
+  .task-body { padding: 12px; }
+  .plan-card, .plan-row { grid-template-columns: minmax(0, 1fr); }
+  .plan-row { gap: 6px; padding: 12px 14px; }
+  .plan-row .badge { justify-self: start; }
 }
