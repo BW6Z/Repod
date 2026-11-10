@@ -17,9 +17,9 @@ export class AnthropicAdapter implements ProviderAdapter {
     // TODO: Implement the Messages API call. Check `stop_reason` before reading
     // content ("max_tokens" -> truncated, "refusal" -> refusal) and map usage
     // (input_tokens excludes cache reads, so it already matches the gateway
-    // convention). Deferred: the deadline build runs on Meta models only
-    // (hackathon credits are Meta-only); external models are an optional
-    // later addition once the competition rules confirm they are allowed.
+    // convention). Deferred: the current presets run on Meta models only, so
+    // nothing calls this adapter yet; it is needed only once a preset assigns
+    // a Claude model to a role.
     throw new NotImplementedError("AnthropicAdapter.call");
   }
 }

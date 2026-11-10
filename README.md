@@ -1,6 +1,8 @@
 # Repod
 
-Meta Global AI Developer Hackathon project.
+Built for the Meta Global AI Developer Hackathon (November 2026). The version
+submitted at the deadline is tagged
+[`hackathon-submission`](https://github.com/BW6Z/Repod/tree/hackathon-submission).
 
 Repod lets a Meta model coordinate a development request: it splits the work
 into subtasks, assigns each one to a model suited to its difficulty and risk,
@@ -11,7 +13,7 @@ The goal is to make the cost and quality trade-off visible, controllable and
 verifiable. Whether routing actually saves money is a question for the
 experiment in `eval/`, not a claim this project makes in advance.
 
-## For judges
+## Overview
 
 **The problem.** Coding with one strong model is reliable but expensive.
 Cheap models are often good enough, but nobody knows in advance which tasks
@@ -33,7 +35,7 @@ task's complexity and impact. You approve the plan. After that:
 4. **Results.** The result is frozen and run against holdout tests the
    models never saw. Every call's tokens and cost are recorded.
 
-**How to judge it.** The `experiment` command runs the same request three
+**How it is evaluated.** The `experiment` command runs the same request three
 ways, with the same checks and holdout tests:
 
 - arm A: one strong model alone;
@@ -52,10 +54,11 @@ viewer shows it.
 | `config/` (default) | Muse Spark 1.3 (coordinator, routine work), Muse Wonder 1.0 (critical work, review) | Meta Model API |
 | `config/open-weights/` | Muse Spark Open (coordinator, critical work, review), Muse Glimmer 30B (routine work, docs), both open-weight | OpenRouter |
 
-**Built during the Hackathon.** Everything in this repository was written
-during the building period. The first commit is dated 2026-10-30, and the
-git history shows each step. Only the open-source dependencies `zod`,
-`typescript` and `@types/node` come from outside.
+**Provenance.** Everything up to the `hackathon-submission` tag was written
+during the hackathon's building period; the first commit is dated
+2026-10-30, and the git history shows each step. Later commits are
+post-hackathon work. Only the open-source dependencies `zod`, `typescript`
+and `@types/node` come from outside.
 
 **Verified so far.** On 2026-11-04 the whole pipeline ran against real
 models: Meta's open-weight Muse Spark Open and Muse Glimmer 30B on
@@ -100,7 +103,7 @@ Meta Model API yet. Do not treat planned items as working features.
 | Model gateway: retries, one format repair, failure classification (`src/gateway/gateway.ts`) | Implemented, tested with a fake adapter |
 | Meta Model API adapter (`src/gateway/adapters/meta.ts`), also used for OpenRouter | Implemented, tested; **verified live against OpenRouter** (strict JSON schema, `store: false`, reasoning effort; computed cost matched OpenRouter's own figure); not yet called on the Meta Model API |
 | Meta open-weight models on OpenRouter (`config/open-weights`, chosen with `REPOD_CONFIG_DIR`) | Implemented, tested; **used for every real run so far** |
-| Anthropic adapter | Planned, optional (deadline build uses Meta models only) |
+| Anthropic adapter | Planned, optional (the current presets use Meta models only) |
 | CLI `check-config`, `spend` | Implemented |
 | CLI `probe` | Implemented; run live on OpenRouter for both models |
 | Capability floor with free/cheap/strong tiers; presets limit which models may execute (`src/orchestrator/routing.ts`) | Implemented, tested |
@@ -288,9 +291,9 @@ Meta Model API.
 ### Meta's open-weight models on OpenRouter
 
 When the Meta Model API cannot be used, Repod can run on Meta's open-weight
-models instead. The organizers confirmed that projects built on them are
-eligible (see `docs/compliance.md`). With this setup, the models and the
-place they run are:
+models instead. During the hackathon, the organizers confirmed that projects
+built on them were eligible (see `docs/compliance.md`). With this setup, the
+models and the place they run are:
 
 | Model | Licence | Runs on | Roles in `saving` |
 |---|---|---|---|
@@ -413,18 +416,19 @@ What this shows so far:
   from a fresh clone yet.
 - Running time of the sample's 20,000-task cases is not a pass condition and
   is not reported yet.
-- Competition compliance is checked against the Participant Guide, the
-  event page and the Official Rules; the Credit Terms and several questions
-  (such as other providers' models) are still open. See
-  `docs/compliance.md`.
+- Compliance with the hackathon rules was checked for the submission
+  against the Participant Guide, the event page and the Official Rules; the
+  Credit Terms and several questions (such as other providers' models) were
+  left open. See `docs/compliance.md`, kept as a record of the submission.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Under the Official Rules the Organizers also
-receive their own licence to the submission; that does not change this one.
+MIT, see [LICENSE](LICENSE). Under the hackathon's Official Rules the
+Organizers also receive their own licence to the submission; that does not
+change this one.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Compliance tracker](docs/compliance.md)
+- [Hackathon compliance record](docs/compliance.md)
 - [Evaluation protocol](eval/README.md)

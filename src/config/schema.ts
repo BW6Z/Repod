@@ -116,8 +116,8 @@ export type ReasoningEffort = z.infer<typeof ReasoningEffort>;
 
 export const Limits = z.strictObject({
   budgetUsd: z.number().positive(), // per run
-  // Across all runs recorded under runs/. Guards real money while hackathon
-  // credits are pending and keeps a reserve for the demo afterwards.
+  // Across all runs recorded under runs/. Caps the real money all runs can
+  // spend together, so a series of runs cannot exhaust the account.
   totalBudgetUsd: z.number().positive(),
   maxClarifyingQuestions: z.number().int().min(0).max(3),
   maxPlanRevisions: z.number().int().min(0).max(1),

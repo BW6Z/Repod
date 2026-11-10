@@ -1,5 +1,9 @@
 # Competition compliance tracker
 
+> This file records the compliance review done for the Meta Global AI
+> Developer Hackathon submission (tag `hackathon-submission`). The hackathon
+> is over; the file is kept as a record and is no longer updated.
+
 Sources of the verified items below:
 
 - the official **Meta Global AI Developer Hackathon Participant Guide**
