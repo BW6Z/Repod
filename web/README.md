@@ -14,7 +14,11 @@ Without `--interactive` the command only reads `runs/`; it never calls a
 model and costs nothing, so it can run next to `run` or `experiment` to
 follow them live.
 
-With `--interactive` a **New run** tab starts a run with a chosen preset:
+With `--interactive` a **New run** button in the top bar (or the N key) opens
+a panel over the page that starts a run with an optional name (one line of
+up to 80 characters, recorded in the run's `run_started` event and shown in
+the run list and the run's header) and a chosen preset, each preset
+explained by its description from `config/`:
 either the demo request, whose contract, visible tests and holdout tests
 apply, or **your own request** on the same sample library, judged only by
 the type check and the library's existing tests. The run is the same paid run
@@ -26,20 +30,40 @@ the run.
 
 ## What it shows
 
-The run view has three columns: the run list (left; a picker in the header
-on narrow screens), the open run (center) and the numbers (right). The open
-run is split into tabs, so each answers one question:
+The page is laid out as a workbench: a rail on the left switches between
+Runs and Experiments and between light and dark; a top bar shows where you
+are and what the open run is doing (and New run, when interactive). The run
+view has three columns that scroll on their own; on wide screens the run
+list runs the full height and the top bar sits over the other two:
+
+- the run list (left; a picker in the top bar on narrower screens), grouped
+  into runs, experiment runs and probes, with a search box (Ctrl/Cmd+K);
+- the open run (center): its title, the name given when it was started or
+  else the first clause of its request; whether it ran the demo request (verified by its holdout tests)
+  or your own; when, how long and how many model calls; and the models by
+  role (coordinator, strong, cheap);
+- an inspector (right; below the run on narrow screens): cost split by phase,
+  the comparison with one strong model, and the run's details.
+
+The page tells the demo request from your own by comparing the run's request
+with the demo request's text, which `data/source.json` carries (live and in a
+replay). The open run is split into tabs, so each answers one question:
 
 - **Overview**: the result first. The acceptance summary, computed from the
   report rather than Meta's words: tasks passed, integrated checks, holdout
-  tests and blocking review findings, each judged on its own. Then one line
-  per task with the model it ran on (an arrow when it escalated to a
-  stronger model), its status, attempts and cost; a line opens that task on
-  the Tasks tab. Last, Meta's summary with problems and review findings.
+  tests and blocking review findings, each judged on its own. Then a table
+  with one row per task: its title and Meta's reason, the model it ran on
+  (an arrow when it escalated to a stronger model), its labels, its result
+  with any repairs or escalation ("Passed · 1 repair") and its cost; a row
+  opens that task on the Tasks tab (its id is in the row's tooltip). Last,
+  Meta's summary with problems and review findings.
 - **Conversation**: your request, Meta's questions, your answers, each
-  proposed plan and your decision; the approved plan is folded. In
-  interactive mode, when the run waits for you, the plan under decision is
-  open here and the answer form or the plan decision sits at the bottom.
+  proposed plan and your decision, as messages with the time (yours) or the
+  coordinator model (Meta's). The plan sits as a card inside Meta's last
+  plan message: one row per task with its id, title, order and files, and
+  model. In interactive mode, when the run waits for you, that card is the
+  plan under decision and the answer form or the plan decision sits at the
+  bottom.
 - **Tasks**: one line per task, opened on demand. An open task shows its
   model (after the capability floor) and why Meta chose it, what it writes,
   and its history: every attempt with its model, cost and checks, and
@@ -73,9 +97,11 @@ and say "not recorded" for data from before the origin was kept. An
 experiment not labelled `formal`, an arm with fewer than three runs, and a
 comparison from another API than the open run's are flagged as well.
 
-The style is frosted glass in muted blues over a soft gradient (CSS
-`backdrop-filter`). Where the browser cannot blur, or the user asks for
-reduced transparency, the panels fall back to a solid colour.
+Light mode is frosted glass in muted blues over a soft gradient (CSS
+`backdrop-filter`); where the browser cannot blur, or the user asks for
+reduced transparency, the panels fall back to a solid colour. Dark mode is
+opaque. The page follows the system setting until the moon button picks one;
+that choice is kept per browser (local storage) and only affects the look.
 
 A run in progress is reloaded every 2 seconds until its `run_finished`
 event; then its report is shown.

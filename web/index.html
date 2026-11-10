@@ -9,17 +9,31 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="bar glass">
-    <div class="brand">Repod<span class="brand-sub">coordinated by Meta</span></div>
-    <nav class="tabs" aria-label="Views">
-      <button type="button" class="tab" data-view="run" aria-pressed="true">Runs</button>
-      <button type="button" class="tab" data-view="experiments" aria-pressed="false">Experiments</button>
+  <!-- Views live in the rail; app.js binds every .tab by its data-view. -->
+  <aside class="rail" aria-label="Views">
+    <div class="logo" aria-hidden="true">R</div>
+    <nav class="tabs">
+      <button type="button" class="tab" data-view="run" aria-pressed="true" title="Runs" aria-label="Runs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      </button>
+      <button type="button" class="tab" data-view="experiments" aria-pressed="false" title="Experiments" aria-label="Experiments">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/></svg>
+      </button>
     </nav>
+    <div class="spacer"></div>
+    <button type="button" class="theme" id="theme" title="Light or dark" aria-label="Switch between light and dark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </aside>
+  <header class="bar">
+    <div class="brand">Repod<span class="brand-sub">coordinated by Meta</span></div>
+    <nav id="crumbs" class="crumbs" aria-label="Where you are"></nav>
     <label class="picker">
       <span class="visually-hidden">Run</span>
       <select id="run-picker"></select>
     </label>
     <div id="live" class="live" aria-live="polite"></div>
+    <div id="actions" class="actions"></div>
   </header>
   <main id="app" class="app" aria-live="polite"></main>
   <script type="module" src="app.js"></script>

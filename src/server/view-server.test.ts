@@ -23,7 +23,7 @@ before(async () => {
   // A finished run with a report, a run still going, a probe, and folders that are not runs.
   await mkdir(path.join(runsDir, "run-done"), { recursive: true });
   await writeFile(path.join(runsDir, "run-done", "events.jsonl"),
-    line({ type: "run_started", preset: "saving", request: "Add planOrder." }) + line({ type: "run_finished", status: "completed", summary: null }));
+    line({ type: "run_started", preset: "saving", request: "Add planOrder.", name: "First try" }) + line({ type: "run_finished", status: "completed", summary: null }));
   await writeFile(path.join(runsDir, "run-done", "report.json"), JSON.stringify({ mode: "coordinated", costUsd: 0.12 }));
   await mkdir(path.join(runsDir, "run-going"));
   await writeFile(path.join(runsDir, "run-going", "events.jsonl"),
@@ -35,7 +35,7 @@ before(async () => {
   await writeFile(path.join(base, "secret.txt"), "outside the runs folder");
 
   const config = await loadConfig(path.join(repoRoot, "config"));
-  server = createViewServer({ webDir: path.join(repoRoot, "web"), runsDir, config });
+  server = createViewServer({ webDir: path.join(repoRoot, "web"), runsDir, config, demoRequest: "Add planOrder." });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -64,12 +64,19 @@ describe("view server", () => {
     ]);
     assert.equal(runs[1].costUsd, 0.12);
     assert.equal(runs[1].mode, "coordinated");
+    // The name given when the run was started; null for a run without one.
+    assert.equal(runs[1].name, "First try");
+    assert.equal(runs[0].name, null);
   });
 
   test("serves a run's ledger and report, and 404 for a report not written yet", async () => {
     assert.match(await (await fetch(`${origin}/data/runs/run-done/events.jsonl`)).text(), /run_finished/);
     assert.equal((await fetch(`${origin}/data/runs/run-done/report.json`)).status, 200);
     assert.equal((await fetch(`${origin}/data/runs/run-going/report.json`)).status, 404);
+  });
+
+  test("names the data source and the demo request's text, so the page can label runs of it", async () => {
+    assert.deepEqual(await (await fetch(`${origin}/data/source.json`)).json(), { source: "local", runsDir: path.basename(runsDir), demoRequest: "Add planOrder." });
   });
 
   test("serves models with tier and price, and experiment results", async () => {
@@ -113,15 +120,17 @@ describe("view server with an interactive session", () => {
   let port: number;
   let started = 0;
   let lastRequest: string | null | undefined;
+  let lastName: string | null | undefined;
 
   before(async () => {
     const config = await loadConfig(path.join(repoRoot, "config"));
     const session = new InteractiveSession({
       request: "Add planOrder.",
       presets: ["saving"],
-      async start(_preset, request, hooks, onStarted) {
+      async start(_preset, request, name, hooks, onStarted) {
         started++;
         lastRequest = request;
+        lastName = name;
         onStarted("run-page");
         await hooks.answerQuestions([{ id: "q1", question: "YAML?", why: "", default: "No" }], "One question.");
       },
@@ -155,6 +164,9 @@ describe("view server with an interactive session", () => {
     assert.equal(session.enabled, true);
     assert.equal(typeof session.token, "string");
     assert.equal(session.request, "Add planOrder.");
+    // The New run panel explains each preset with its description from config/.
+    assert.equal(typeof session.presetInfo.saving, "string");
+    assert.ok(session.presetInfo.saving.length > 0);
     const rebound = await call("GET", "/data/session.json", { Host: `attacker.example:${port}` });
     assert.equal(rebound.status, 403);
     assert.doesNotMatch(rebound.text, new RegExp(session.token));
@@ -174,12 +186,15 @@ describe("view server with an interactive session", () => {
     assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: 1 }))).status, 400, "invalid body");
     assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: "saving", request: "   " }))).status, 400, "blank request");
     assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: "saving", request: "x".repeat(4001) }))).status, 400, "request too long");
+    assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: "saving", name: "x".repeat(81) }))).status, 400, "name too long");
+    assert.equal((await call("POST", "/api/start", page, JSON.stringify({ preset: "saving", name: "a\nb" }))).status, 400, "name with a line break");
     assert.equal(started, 0, "nothing was started by any refused request");
 
     const ok = await call("POST", "/api/start", page, body);
     assert.equal(ok.status, 200, ok.text);
     assert.deepEqual(JSON.parse(ok.text), { ok: true, runId: "run-page" });
     assert.equal(lastRequest, null, "no request field runs the demo request");
+    assert.equal(lastName, null, "no name field: the run has no name");
     assert.equal((await call("POST", "/api/start", page, body)).status, 409, "one run at a time");
   });
 

@@ -22,7 +22,8 @@ dropped from reports (their names would reveal the private tests).
 
 `session.ts` holds the interactive mode: one paid run of the demo request at
 a time, started through the CLI's own `runDemo`, with pipeline hooks that
-wait for the page instead of the terminal. Its actions (`POST api/start`,
+wait for the page instead of the terminal; a run can be given a short name,
+recorded in its `run_started` event. Its actions (`POST api/start`,
 `api/answers`, `api/review`) are accepted only from the page's own origin,
 with the session token in a custom `X-Repod-Token` header and a JSON body
 of at most 32 KB, so no other web page can start a paid run.

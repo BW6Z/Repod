@@ -54,12 +54,13 @@ test("scrubPaths replaces a path in every spelling JSON text may hold", () => {
 
 test("a replay holds finished runs and experiments, without local paths, holdout output or the session", async () => {
   const out = path.join(base, "replay-all");
-  const summary = await exportReplay({ webDir: path.join(repoRoot, "web"), runsDir, repoRoot, config, outDir: out, include: [] });
+  const summary = await exportReplay({ webDir: path.join(repoRoot, "web"), runsDir, repoRoot, config, outDir: out, include: [], demoRequest: "Add planOrder." });
   assert.deepEqual(summary.runs.sort(), ["exp-1-a1", "run-a"]);
   assert.deepEqual(summary.experiments, ["exp-1"]);
 
   assert.deepEqual((await readdir(out)).sort(), ["app.js", "data", "index.html", "style.css"]);
   assert.deepEqual(JSON.parse(await read(out, "data/source.json")).source, "replay");
+  assert.equal(JSON.parse(await read(out, "data/source.json")).demoRequest, "Add planOrder.");
   assert.deepEqual(JSON.parse(await read(out, "data/session.json")), { enabled: false });
   assert.deepEqual(JSON.parse(await read(out, "data/runs.json")).map((r: { id: string }) => r.id).sort(), ["exp-1-a1", "run-a"]);
   assert.ok(Object.keys(JSON.parse(await read(out, "data/models.json"))).length > 0);

@@ -91,6 +91,7 @@ export interface PipelineOptions {
   // holdout) is the same as in a coordinated run.
   singleModelTask?: PlannedTask;
   endpoint?: string; // origin of the model API, recorded so rehearsal runs are never taken for real ones
+  name?: string; // the user's name for the run, recorded for the run list; never sent to a model
 }
 
 /**
@@ -197,6 +198,7 @@ class Run {
       preset: this.o.preset.name,
       request: this.o.request,
       ...(this.o.endpoint ? { endpoint: this.o.endpoint } : {}),
+      ...(this.o.name ? { name: this.o.name } : {}),
     });
 
     try {

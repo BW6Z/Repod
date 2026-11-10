@@ -226,6 +226,7 @@ async function runDemo(o: {
   preset: string | null;
   holdout: string | null;
   request?: string | null; // a free-form request instead of the demo request
+  name?: string | null; // the user's name for the run, recorded in run_started
   hooks: PipelineHooks;
   command: string;
   onStarted?: (runId: string) => void;
@@ -281,6 +282,7 @@ async function runDemo(o: {
       remainingBudgetUsd: Math.min(limits.budgetUsd, limits.totalBudgetUsd - spentBefore),
       hooks: o.hooks,
       endpoint: adapter.endpoint,
+      ...(o.name ? { name: o.name } : {}),
     });
 
     const reportFile = path.join(workspace.runDir, "report.json");
@@ -375,17 +377,17 @@ async function experiment(options: CommandOptions): Promise<number> {
  */
 async function view(options: CommandOptions): Promise<number> {
   const config = await loadConfig(configDir);
+  const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
   let session: InteractiveSession | null = null;
   if (options.interactive) {
-    const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
     session = new InteractiveSession({
       request: kit.request,
       presets: [...config.presets.keys()],
-      start: (preset, request, hooks, onStarted) => runDemo({ preset, holdout: options.holdout, request, hooks, command: "view", onStarted }),
+      start: (preset, request, name, hooks, onStarted) => runDemo({ preset, holdout: options.holdout, request, name, hooks, command: "view", onStarted }),
     });
     if (!options.holdout) console.warn("No --holdout folder given: runs started from the page will not run holdout tests.");
   }
-  const server = createViewServer({ webDir: path.join(repoRoot, "web"), runsDir, config, session });
+  const server = createViewServer({ webDir: path.join(repoRoot, "web"), runsDir, config, session, demoRequest: kit.request });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, "127.0.0.1", resolve);
@@ -401,7 +403,8 @@ async function view(options: CommandOptions): Promise<number> {
 async function exportCommand(options: CommandOptions): Promise<number> {
   const outDir = path.resolve(options.out!);
   const config = await loadConfig(configDir);
-  const exported = await exportReplay({ webDir: path.join(repoRoot, "web"), runsDir, repoRoot, config, outDir, include: options.include });
+  const kit = await loadDemoKit(path.join(repoRoot, "eval", "demo"));
+  const exported = await exportReplay({ webDir: path.join(repoRoot, "web"), runsDir, repoRoot, config, outDir, include: options.include, demoRequest: kit.request });
   console.log(`Replay written to ${outDir}: ${exported.runs.length} run(s), ${exported.experiments.length} experiment(s).`);
   console.log("Serve the folder with any static file server; the page cannot open it from disk (file://).");
   return 0;
